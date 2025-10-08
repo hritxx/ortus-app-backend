@@ -1,0 +1,445 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+    id       String  @id @default(cuid())
+    email    String  @unique
+    password String
+    name     String?
+    phone    String? @unique
+
+    // KYC Information
+    panNumber     String? @unique
+    aadhaarNumber String? @unique
+    address       String?
+    city          String?
+    state         String?
+    pincode       String?
+    dateOfBirth   String?
+
+    // Professional Information
+    occupation   String?
+    annualIncome String?
+
+    // Bank Details
+    bankAccount   String?
+    ifscCode      String?
+    bankName      String?
+    accountHolder String?
+
+    // Token Balance
+    tokenBalance Int @default(0)
+
+    // Status & Verification
+    kycStatus        KycStatus @default(PENDING)
+    emailVerified    Boolean   @default(false)
+    phoneVerified    Boolean   @default(false)
+    twoFactorEnabled Boolean   @default(false)
+    isActive         Boolean   @default(true)
+
+    // Refresh Token for JWT
+    refreshToken String?
+
+    // Metadata
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    lastLoginAt DateTime?
+
+    // Relations
+    investments        Investment[]
+    transactions       Transaction[]
+    notifications      Notification[]
+    devices            Device[]
+    otpVerifications   OtpVerification[]
+    auditLogs          AuditLog[]
+    portfolioSnapshots PortfolioSnapshot[]
+    tokenTransactions  TokenTransaction[]
+
+    @@index([email])
+    @@index([phone])
+    @@index([panNumber])
+    @@index([aadhaarNumber])
+    @@map("users")
+}
+
+model InvestmentPlan {
+    id                String         @id @default(cuid())
+    name              String
+    professionalTitle String
+    type              InvestmentType
+    interestRate      Float
+    minimumInvestment Float
+    maximumInvestment Float?
+    lockInPeriod      Int // in months
+    description       String
+    benefits          String[]
+    riskLevel         RiskLevel
+    fees              Json // { managementFee: 0.5, exitFee: 1.0, etc }
+
+    // Token Allocation
+    fixedTokens       Int @default(0) // Fixed tokens granted upon investment
+    minPeriodicTokens Int @default(5) // Minimum random tokens per payment
+    maxPeriodicTokens Int @default(50) // Maximum random tokens per payment
+
+    metadata Json? // Additional plan metadata
+    isActive Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    investments Investment[]
+
+    @@map("investment_plans")
+}
+
+model Investment {
+    id     String @id @default(cuid())
+    userId String
+    planId String
+
+    // Investment Details
+    amountInvested    Float
+    currentValue      Float
+    returns           Float
+    returnsPercentage Float
+    maturityDate      DateTime
+    nextSipDate       DateTime?
+    sipAmount         Float?
+    swpAmount         Float?
+
+    // Status
+    status InvestmentStatus @default(ACTIVE)
+
+    // Metadata
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    plan         InvestmentPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+    transactions Transaction[]
+
+    @@index([userId])
+    @@index([planId])
+    @@index([status])
+    @@map("investments")
+}
+
+model Transaction {
+    id           String  @id @default(cuid())
+    userId       String
+    investmentId String?
+
+    // Transaction Details
+    type             TransactionType
+    amount           Float
+    fee              Float             @default(0)
+    status           TransactionStatus @default(PENDING)
+    paymentMethod    String?
+    paymentReference String?
+
+    // Razorpay Fields
+    razorpayOrderId   String? @unique
+    razorpayPaymentId String? @unique
+    razorpaySignature String?
+
+    // Metadata
+    description String?
+    metadata    Json?
+
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    processedAt DateTime?
+
+    // Relations
+    user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    investment Investment? @relation(fields: [investmentId], references: [id], onDelete: SetNull)
+
+    @@index([userId])
+    @@index([investmentId])
+    @@index([status])
+    @@index([type])
+    @@index([razorpayOrderId])
+    @@index([razorpayPaymentId])
+    @@map("transactions")
+}
+
+model Notification {
+    id     String @id @default(cuid())
+    userId String
+
+    // Notification Content
+    title    String
+    body     String
+    type     NotificationType
+    category NotificationCategory
+
+    // Delivery
+    isRead     Boolean   @default(false)
+    isPushSent Boolean   @default(false)
+    pushSentAt DateTime?
+
+    // Metadata
+    data      Json? // Additional notification data
+    expiresAt DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([isRead])
+    @@index([type])
+    @@index([category])
+    @@map("notifications")
+}
+
+model Device {
+    id     String @id @default(cuid())
+    userId String
+
+    // Device Information
+    deviceToken String         @unique
+    platform    DevicePlatform
+    deviceId    String
+    deviceName  String?
+    appVersion  String?
+    osVersion   String?
+
+    // Status
+    isActive     Boolean  @default(true)
+    lastActiveAt DateTime @default(now())
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([deviceToken])
+    @@index([platform])
+    @@map("devices")
+}
+
+model OtpVerification {
+    id     String  @id @default(cuid())
+    userId String?
+
+    // OTP Details
+    email   String?
+    phone   String?
+    otp     String
+    type    OtpType
+    purpose OtpPurpose
+
+    // Status
+    isVerified  Boolean @default(false)
+    isExpired   Boolean @default(false)
+    attempts    Int     @default(0)
+    maxAttempts Int     @default(3)
+
+    // Timing
+    expiresAt  DateTime
+    verifiedAt DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([email])
+    @@index([phone])
+    @@index([type])
+    @@index([purpose])
+    @@map("otp_verifications")
+}
+
+model AuditLog {
+    id     String  @id @default(cuid())
+    userId String?
+
+    // Audit Information
+    action     String
+    resource   String
+    resourceId String?
+    oldValues  Json?
+    newValues  Json?
+
+    // Context
+    ipAddress String?
+    userAgent String?
+    metadata  Json?
+
+    createdAt DateTime @default(now())
+
+    // Relations
+    user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+    @@index([userId])
+    @@index([action])
+    @@index([resource])
+    @@index([createdAt])
+    @@map("audit_logs")
+}
+
+model PortfolioSnapshot {
+    id     String @id @default(cuid())
+    userId String
+
+    // Portfolio Metrics
+    totalInvested          Float
+    currentValue           Float
+    totalReturns           Float
+    totalReturnsPercentage Float
+    tokenBalance           Float @default(0)
+
+    // Metadata
+    snapshotDate DateTime @default(now())
+    createdAt    DateTime @default(now())
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([snapshotDate])
+    @@map("portfolio_snapshots")
+}
+
+model TokenTransaction {
+    id     String @id @default(cuid())
+    userId String
+
+    // Token Transaction Details
+    type        TokenTransactionType
+    amount      Int // positive for credit, negative for debit
+    balance     Int // balance after transaction
+    source      String // "investment_signup", "periodic_payment", "referral", "bonus", etc.
+    description String?
+
+    // Relations
+    investmentId String?
+    planId       String?
+
+    // Metadata
+    metadata  Json?
+    createdAt DateTime @default(now())
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([type])
+    @@index([createdAt])
+    @@map("token_transactions")
+}
+
+// Enums
+enum KycStatus {
+    PENDING
+    IN_REVIEW
+    APPROVED
+    REJECTED
+    INCOMPLETE
+}
+
+enum InvestmentType {
+    LUMP_SUM
+    SIP
+    SWP
+}
+
+enum RiskLevel {
+    LOW
+    MEDIUM
+    HIGH
+}
+
+enum InvestmentStatus {
+    ACTIVE
+    MATURED
+    WITHDRAWN
+    PAUSED
+    CANCELLED
+}
+
+enum TransactionType {
+    INVESTMENT
+    WITHDRAWAL
+    SIP_PAYMENT
+    SWP_PAYOUT
+    FEE
+    REFUND
+    DIVIDEND
+}
+
+enum TransactionStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+    CANCELLED
+    REFUNDED
+}
+
+enum NotificationType {
+    INFO
+    SUCCESS
+    WARNING
+    ERROR
+    PROMOTIONAL
+}
+
+enum NotificationCategory {
+    INVESTMENT
+    TRANSACTION
+    KYC
+    SECURITY
+    SYSTEM
+    MARKETING
+}
+
+enum DevicePlatform {
+    IOS
+    ANDROID
+    WEB
+}
+
+enum OtpType {
+    EMAIL
+    SMS
+}
+
+enum OtpPurpose {
+    REGISTRATION
+    LOGIN
+    PASSWORD_RESET
+    TRANSACTION_VERIFICATION
+    KYC_VERIFICATION
+    WITHDRAWAL
+}
+
+enum TokenTransactionType {
+    CREDIT
+    DEBIT
+    INVESTMENT_SIGNUP
+    PERIODIC_PAYMENT
+    REFERRAL_BONUS
+    PROMOTIONAL
+    REDEMPTION
+    EXPIRY
+    ADJUSTMENT
+}

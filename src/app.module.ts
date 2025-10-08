@@ -8,6 +8,7 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { PaymentModule } from "./modules/payment/payment.module";
 import { InvestmentModule } from "./modules/investment/investment.module";
 import { NotificationModule } from "./modules/notification/notification.module";
+import { AppController } from "./app.controller";
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { NotificationModule } from "./modules/notification/notification.module";
     InvestmentModule,
     NotificationModule,
   ],
+  controllers: [AppController],
   providers: [],
 })
 export class AppModule {}

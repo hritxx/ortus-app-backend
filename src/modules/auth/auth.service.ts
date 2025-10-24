@@ -564,9 +564,79 @@ export class AuthService {
       throw new NotFoundException("User not found");
     }
 
+    // Check for unique constraint conflicts before updating
+    if (
+      updateProfileDto.panNumber &&
+      updateProfileDto.panNumber !== user.panNumber
+    ) {
+      const existingPan = await this.prisma.user.findUnique({
+        where: { panNumber: updateProfileDto.panNumber },
+      });
+      if (existingPan && existingPan.id !== userId) {
+        throw new BadRequestException(
+          "PAN number is already registered with another account"
+        );
+      }
+    }
+
+    if (
+      updateProfileDto.aadhaarNumber &&
+      updateProfileDto.aadhaarNumber !== user.aadhaarNumber
+    ) {
+      const existingAadhaar = await this.prisma.user.findUnique({
+        where: { aadhaarNumber: updateProfileDto.aadhaarNumber },
+      });
+      if (existingAadhaar && existingAadhaar.id !== userId) {
+        throw new BadRequestException(
+          "Aadhaar number is already registered with another account"
+        );
+      }
+    }
+
+    // Only update fields that are different from current values
+    const updateData: any = {};
+    Object.keys(updateProfileDto).forEach((key) => {
+      if (updateProfileDto[key] !== user[key]) {
+        updateData[key] = updateProfileDto[key];
+      }
+    });
+
+    // If no fields need updating, return current user
+    if (Object.keys(updateData).length === 0) {
+      return {
+        success: true,
+        message: "Profile is already up to date",
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          phone: user.phone,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          kycStatus: user.kycStatus,
+          tokenBalance: user.tokenBalance,
+          panNumber: user.panNumber,
+          aadhaarNumber: user.aadhaarNumber,
+          address: user.address,
+          city: user.city,
+          state: user.state,
+          pincode: user.pincode,
+          dateOfBirth: user.dateOfBirth,
+          occupation: user.occupation,
+          annualIncome: user.annualIncome,
+          bankAccount: user.bankAccount,
+          ifscCode: user.ifscCode,
+          bankName: user.bankName,
+          accountHolder: user.accountHolder,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      };
+    }
+
     const updatedUser = await this.prisma.user.update({
       where: { id: userId },
-      data: updateProfileDto,
+      data: updateData,
       select: {
         id: true,
         email: true,

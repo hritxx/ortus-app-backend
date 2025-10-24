@@ -18,6 +18,7 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ChangePasswordDto,
   CompleteKycDto,
   UpdateProfileDto,
 } from "./dto/auth.dto";
@@ -421,6 +422,62 @@ export class AuthService {
     return {
       success: true,
       message: "Password reset successfully",
+    };
+  }
+
+  async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
+    const { currentPassword, newPassword } = changePasswordDto;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password
+    );
+
+    if (!isPasswordValid) {
+      throw new UnauthorizedException("Current password is incorrect");
+    }
+
+    // Check if new password is same as current
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      throw new BadRequestException(
+        "New password must be different from current password"
+      );
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    // Update password and invalidate refresh token (force re-login on other devices)
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        password: hashedPassword,
+        refreshToken: null,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: "PASSWORD_CHANGED",
+        resource: "USER",
+        resourceId: userId,
+      },
+    });
+
+    return {
+      success: true,
+      message: "Password changed successfully. Please login again.",
     };
   }
 

@@ -74,6 +74,22 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(8, {
+    message: "Current password must be at least 8 characters long",
+  })
+  currentPassword: string;
+
+  @IsString()
+  @MinLength(8, { message: "New password must be at least 8 characters long" })
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
+    message:
+      "Password must contain uppercase, lowercase, number, and special character",
+  })
+  newPassword: string;
+}
+
 export class CompleteKycDto {
   @IsString()
   @Matches(/^[A-Z]{5}[0-9]{4}[A-Z]$/, { message: "Invalid PAN number format" })

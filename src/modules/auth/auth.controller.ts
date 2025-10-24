@@ -19,6 +19,7 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ChangePasswordDto,
   CompleteKycDto,
   UpdateProfileDto,
 } from "./dto/auth.dto";
@@ -68,6 +69,16 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
+  }
+
+  @Post("change-password")
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Request() req,
+    @Body() changePasswordDto: ChangePasswordDto
+  ) {
+    return this.authService.changePassword(req.user.id, changePasswordDto);
   }
 
   @Post("complete-kyc")

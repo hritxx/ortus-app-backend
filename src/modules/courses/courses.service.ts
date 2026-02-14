@@ -33,9 +33,17 @@ export class CoursesService {
     }
 
     this.razorpay = new Razorpay({
-      key_id: keyId,
-      key_secret: keySecret,
+      key_id: keyId || '',
+      key_secret: keySecret || '',
     });
+  }
+
+  private checkRazorpayConfig() {
+    const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
+    const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
+    if (!keyId || !keySecret) {
+      throw new InternalServerErrorException('Payment service is not configured. Please contact support.');
+    }
   }
 
   /**
@@ -255,6 +263,9 @@ export class CoursesService {
 
       // If there's a pending enrollment, use that
       if (existingEnrollment.status === EnrollmentStatus.PENDING) {
+        // Check Razorpay is configured
+        this.checkRazorpayConfig();
+
         // Create new Razorpay order for existing pending enrollment
         try {
           const orderData = {
@@ -288,15 +299,18 @@ export class CoursesService {
               razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
             },
           };
-        } catch (error) {
-          this.logger.error(`Error creating Razorpay order: ${error.message}`);
-          this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
+        } catch (error: any) {
+          this.logger.error(`Error creating Razorpay order: ${error?.message || error}`);
+          this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error || {}))}`);
           throw new InternalServerErrorException(
-            `Failed to create payment order: ${error.message}`
+            `Failed to create payment order: ${error?.message || 'Unknown error'}`
           );
         }
       }
     }
+
+    // Check Razorpay is configured
+    this.checkRazorpayConfig();
 
     // Create new enrollment with PENDING status
     const enrollment = await this.prisma.courseEnrollment.create({
@@ -341,15 +355,15 @@ export class CoursesService {
           razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       // Clean up enrollment if order creation fails
       await this.prisma.courseEnrollment.delete({
         where: { id: enrollment.id },
       });
 
-      this.logger.error(`Error creating Razorpay order: ${error.message}`);
-      this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
-      throw new InternalServerErrorException(`Failed to create payment order: ${error.message}`);
+      this.logger.error(`Error creating Razorpay order: ${error?.message || error}`);
+      this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error || {}))}`);
+      throw new InternalServerErrorException(`Failed to create payment order: ${error?.message || 'Unknown error'}`);
     }
   }
 
@@ -396,7 +410,7 @@ export class CoursesService {
         );
         throw new BadRequestException("Invalid payment signature");
       }
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof BadRequestException) {
         throw error;
       }

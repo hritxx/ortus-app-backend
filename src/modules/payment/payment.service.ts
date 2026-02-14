@@ -79,10 +79,10 @@ export class PaymentService {
         receipt: order.receipt,
         razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
       };
-    } catch (error) {
-      this.logger.error(`Error creating Razorpay order: ${error.message}`);
-      this.logger.error(`Error stack: ${error.stack}`);
-      throw new InternalServerErrorException(`Failed to create payment order: ${error.message}`);
+    } catch (error: any) {
+      this.logger.error(`Error creating Razorpay order: ${error?.message || error}`);
+      this.logger.error(`Error stack: ${error?.stack || 'No stack trace'}`);
+      throw new InternalServerErrorException(`Failed to create payment order: ${error?.message || 'Unknown error'}`);
     }
   }
 

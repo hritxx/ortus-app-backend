@@ -30,9 +30,17 @@ export class ConsultancyService {
     }
 
     this.razorpay = new Razorpay({
-      key_id: keyId,
-      key_secret: keySecret,
+      key_id: keyId || '',
+      key_secret: keySecret || '',
     });
+  }
+
+  private checkRazorpayConfig() {
+    const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
+    const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
+    if (!keyId || !keySecret) {
+      throw new InternalServerErrorException('Payment service is not configured. Please contact support.');
+    }
   }
 
   async getServices(userId?: string, type?: string) {
@@ -141,6 +149,9 @@ export class ConsultancyService {
       throw new BadRequestException("You already have an active subscription to this service");
     }
 
+    // Check Razorpay is configured
+    this.checkRazorpayConfig();
+
     try {
       // Create Razorpay order
       const shortReceipt = `sub_${Date.now().toString().slice(-10)}`;
@@ -180,7 +191,7 @@ export class ConsultancyService {
           razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error("Error creating subscription order:", error);
       throw new InternalServerErrorException("Failed to create subscription order");
     }
@@ -214,7 +225,7 @@ export class ConsultancyService {
 
       // Handle subscription activation
       return this.activateSubscription(userId, serviceId, subscriptionId, razorpayPaymentId);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error("Payment verification error:", error);
       if (error instanceof BadRequestException) {
         throw error;
@@ -524,6 +535,9 @@ export class ConsultancyService {
       );
     }
 
+    // Check Razorpay is configured
+    this.checkRazorpayConfig();
+
     try {
       // Create Razorpay order
       const shortReceipt = `ses_${Date.now().toString().slice(-10)}`;
@@ -572,7 +586,7 @@ export class ConsultancyService {
           razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error("Error creating session booking order:", error);
       throw new InternalServerErrorException("Failed to create session booking");
     }

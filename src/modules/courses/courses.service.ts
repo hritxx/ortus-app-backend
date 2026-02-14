@@ -22,9 +22,19 @@ export class CoursesService {
     private prisma: PrismaService,
     private configService: ConfigService
   ) {
+    const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
+    const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
+
+    this.logger.log(`Initializing Razorpay with key_id: ${keyId ? keyId.substring(0, 10) + '...' : 'MISSING'}`);
+    this.logger.log(`Razorpay key_secret: ${keySecret ? 'SET (' + keySecret.length + ' chars)' : 'MISSING'}`);
+
+    if (!keyId || !keySecret) {
+      this.logger.error('Razorpay credentials missing! Check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET env vars');
+    }
+
     this.razorpay = new Razorpay({
-      key_id: this.configService.get<string>("RAZORPAY_KEY_ID"),
-      key_secret: this.configService.get<string>("RAZORPAY_KEY_SECRET"),
+      key_id: keyId,
+      key_secret: keySecret,
     });
   }
 
@@ -247,7 +257,7 @@ export class CoursesService {
       if (existingEnrollment.status === EnrollmentStatus.PENDING) {
         // Create new Razorpay order for existing pending enrollment
         try {
-          const order = await this.razorpay.orders.create({
+          const orderData = {
             amount: Math.round(course.price * 100), // Convert to paise
             currency: course.currency || "INR",
             receipt: `course_${courseId.slice(-8)}_${Date.now().toString().slice(-6)}`,
@@ -257,7 +267,11 @@ export class CoursesService {
               enrollmentId: existingEnrollment.id,
               type: "course_enrollment",
             },
-          });
+          };
+
+          this.logger.log(`Creating Razorpay order with data: ${JSON.stringify(orderData)}`);
+
+          const order = await this.razorpay.orders.create(orderData);
 
           this.logger.log(
             `Razorpay order created: ${order.id} for enrollment: ${existingEnrollment.id}`
@@ -275,9 +289,10 @@ export class CoursesService {
             },
           };
         } catch (error) {
-          this.logger.error("Error creating Razorpay order:", error);
+          this.logger.error(`Error creating Razorpay order: ${error.message}`);
+          this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
           throw new InternalServerErrorException(
-            "Failed to create payment order"
+            `Failed to create payment order: ${error.message}`
           );
         }
       }
@@ -295,7 +310,7 @@ export class CoursesService {
 
     // Create Razorpay order
     try {
-      const order = await this.razorpay.orders.create({
+      const orderData = {
         amount: Math.round(course.price * 100), // Convert to paise
         currency: course.currency || "INR",
         receipt: `course_${courseId.slice(-8)}_${Date.now().toString().slice(-6)}`,
@@ -305,7 +320,11 @@ export class CoursesService {
           enrollmentId: enrollment.id,
           type: "course_enrollment",
         },
-      });
+      };
+
+      this.logger.log(`Creating Razorpay order for new enrollment with data: ${JSON.stringify(orderData)}`);
+
+      const order = await this.razorpay.orders.create(orderData);
 
       this.logger.log(
         `Razorpay order created: ${order.id} for enrollment: ${enrollment.id}`
@@ -328,8 +347,9 @@ export class CoursesService {
         where: { id: enrollment.id },
       });
 
-      this.logger.error("Error creating Razorpay order:", error);
-      throw new InternalServerErrorException("Failed to create payment order");
+      this.logger.error(`Error creating Razorpay order: ${error.message}`);
+      this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
+      throw new InternalServerErrorException(`Failed to create payment order: ${error.message}`);
     }
   }
 

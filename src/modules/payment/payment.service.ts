@@ -23,9 +23,14 @@ export class PaymentService {
     private prisma: PrismaService,
     private configService: ConfigService
   ) {
+    const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
+    const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
+
+    this.logger.log(`Initializing Razorpay with key_id: ${keyId ? keyId.substring(0, 10) + '...' : 'MISSING'}`);
+
     this.razorpay = new Razorpay({
-      key_id: this.configService.get<string>("RAZORPAY_KEY_ID"),
-      key_secret: this.configService.get<string>("RAZORPAY_KEY_SECRET"),
+      key_id: keyId,
+      key_secret: keySecret,
     });
   }
 
@@ -37,13 +42,32 @@ export class PaymentService {
       const shortReceipt =
         receipt || `rcpt_${Date.now().toString().slice(-10)}`;
 
-      // Create Razorpay order
-      const order = await this.razorpay.orders.create({
+      // Handle notes - can be string, object, or undefined
+      let parsedNotes = {};
+      if (notes) {
+        if (typeof notes === 'string') {
+          try {
+            parsedNotes = JSON.parse(notes);
+          } catch (e) {
+            this.logger.warn(`Failed to parse notes as JSON: ${notes}`);
+            parsedNotes = { raw: notes };
+          }
+        } else if (typeof notes === 'object') {
+          parsedNotes = notes;
+        }
+      }
+
+      const orderData = {
         amount: amount * 100, // Convert to paise
         currency: currency || "INR",
         receipt: shortReceipt,
-        notes: notes ? JSON.parse(notes) : {},
-      });
+        notes: parsedNotes,
+      };
+
+      this.logger.log(`Creating Razorpay order: ${JSON.stringify(orderData)}`);
+
+      // Create Razorpay order
+      const order = await this.razorpay.orders.create(orderData);
 
       this.logger.log(`Order created: ${order.id} for user: ${userId}`);
 
@@ -56,8 +80,9 @@ export class PaymentService {
         razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
       };
     } catch (error) {
-      this.logger.error("Error creating Razorpay order:", error);
-      throw new InternalServerErrorException("Failed to create payment order");
+      this.logger.error(`Error creating Razorpay order: ${error.message}`);
+      this.logger.error(`Error stack: ${error.stack}`);
+      throw new InternalServerErrorException(`Failed to create payment order: ${error.message}`);
     }
   }
 

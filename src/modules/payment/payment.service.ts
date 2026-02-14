@@ -58,7 +58,7 @@ export class PaymentService {
       }
 
       const orderData = {
-        amount: amount * 100, // Convert to paise
+        amount: Math.round(amount * 100), // Convert to paise (must be integer)
         currency: currency || "INR",
         receipt: shortReceipt,
         notes: parsedNotes,

@@ -134,13 +134,12 @@ export class ConsultancyService {
       throw new BadRequestException("This service is not currently available");
     }
 
-    // Check for existing active subscription
-    const existingSubscription = await this.prisma.consultancySubscription.findFirst({
+    // Check for existing subscription (any status)
+    const existingSubscription = await this.prisma.consultancySubscription.findUnique({
       where: {
-        userId,
-        serviceId,
-        status: {
-          in: ["ACTIVE", "PENDING"],
+        userId_serviceId: {
+          userId,
+          serviceId,
         },
       },
     });
@@ -156,7 +155,7 @@ export class ConsultancyService {
       // Create Razorpay order
       const shortReceipt = `sub_${Date.now().toString().slice(-10)}`;
       const order = await this.razorpay.orders.create({
-        amount: service.price * 100, // Convert to paise
+        amount: Math.round(service.price * 100), // Convert to paise (must be integer)
         currency: service.currency || "INR",
         receipt: shortReceipt,
         notes: {
@@ -166,9 +165,20 @@ export class ConsultancyService {
         },
       });
 
-      // Create pending subscription record
-      const subscription = await this.prisma.consultancySubscription.create({
-        data: {
+      // Create or update subscription record
+      const subscription = await this.prisma.consultancySubscription.upsert({
+        where: {
+          userId_serviceId: {
+            userId,
+            serviceId,
+          },
+        },
+        update: {
+          status: "PENDING",
+          amountPaid: service.price,
+          autoRenew: subscribeDto.autoRenew ?? false,
+        },
+        create: {
           userId,
           serviceId,
           status: "PENDING",
@@ -542,7 +552,7 @@ export class ConsultancyService {
       // Create Razorpay order
       const shortReceipt = `ses_${Date.now().toString().slice(-10)}`;
       const order = await this.razorpay.orders.create({
-        amount: service.price * 100, // Convert to paise
+        amount: Math.round(service.price * 100), // Convert to paise (must be integer)
         currency: service.currency || "INR",
         receipt: shortReceipt,
         notes: {

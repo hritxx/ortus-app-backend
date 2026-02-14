@@ -8,6 +8,9 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { PaymentModule } from "./modules/payment/payment.module";
 import { InvestmentModule } from "./modules/investment/investment.module";
 import { NotificationModule } from "./modules/notification/notification.module";
+import { CoursesModule } from "./modules/courses/courses.module";
+import { ConsultancyModule } from "./modules/consultancy/consultancy.module";
+import { ChannelsModule } from "./modules/channels/channels.module";
 import { AppController } from "./app.controller";
 
 @Module({
@@ -35,6 +38,9 @@ import { AppController } from "./app.controller";
     PaymentModule,
     InvestmentModule,
     NotificationModule,
+    CoursesModule,
+    ConsultancyModule,
+    ChannelsModule,
   ],
   controllers: [AppController],
   providers: [],

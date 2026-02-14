@@ -206,7 +206,7 @@ export class ChannelsService {
 
     const skip = (page - 1) * limit;
 
-    // Get posts with reactions
+    // Get posts with reactions and admin user info
     const [posts, total] = await Promise.all([
       this.prisma.channelPost.findMany({
         where: { channelId },
@@ -219,6 +219,17 @@ export class ChannelsService {
       }),
       this.prisma.channelPost.count({ where: { channelId } }),
     ]);
+
+    // Get admin user names for posts
+    const adminIds = [...new Set(posts.map(p => p.postedBy))];
+    const adminUsers = await this.prisma.user.findMany({
+      where: { id: { in: adminIds } },
+      select: { id: true, name: true, email: true },
+    });
+    const adminMap = adminUsers.reduce((acc, user) => {
+      acc[user.id] = user.name || user.email?.split('@')[0] || 'Admin';
+      return acc;
+    }, {} as Record<string, string>);
 
     // Process posts to include reaction counts and user's reaction
     const postsWithReactions = posts.map((post) => {
@@ -240,7 +251,7 @@ export class ChannelsService {
         attachments: post.attachments,
         meetingLink: post.meetingLink,
         eventTime: post.eventTime,
-        postedBy: post.postedBy,
+        postedBy: adminMap[post.postedBy] || 'Admin',
         isPinned: post.isPinned,
         createdAt: post.createdAt,
         updatedAt: post.updatedAt,

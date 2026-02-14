@@ -217,15 +217,23 @@ export class ConsultancyService {
     } = verifyPaymentDto;
 
     try {
-      // Generate signature for verification
-      const generatedSignature = crypto
-        .createHmac("sha256", this.configService.get<string>("RAZORPAY_KEY_SECRET"))
-        .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-        .digest("hex");
+      // Skip signature verification in development mode for mock payments
+      const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
+      const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
 
-      if (generatedSignature !== razorpaySignature) {
-        this.logger.warn(`Payment verification failed for user: ${userId}`);
-        throw new BadRequestException("Invalid payment signature");
+      if (isDevelopment && isMockPayment) {
+        this.logger.warn(`Skipping signature verification for mock payment in development: ${razorpayPaymentId}`);
+      } else {
+        // Generate signature for verification
+        const generatedSignature = crypto
+          .createHmac("sha256", this.configService.get<string>("RAZORPAY_KEY_SECRET"))
+          .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+          .digest("hex");
+
+        if (generatedSignature !== razorpaySignature) {
+          this.logger.warn(`Payment verification failed for user: ${userId}`);
+          throw new BadRequestException("Invalid payment signature");
+        }
       }
 
       // Determine if this is a subscription or session payment

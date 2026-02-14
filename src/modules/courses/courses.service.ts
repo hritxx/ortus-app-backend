@@ -396,19 +396,27 @@ export class CoursesService {
 
     // Verify Razorpay signature
     try {
-      const generatedSignature = crypto
-        .createHmac(
-          "sha256",
-          this.configService.get<string>("RAZORPAY_KEY_SECRET")
-        )
-        .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-        .digest("hex");
+      // Skip signature verification in development mode for mock payments
+      const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
+      const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
 
-      if (generatedSignature !== razorpaySignature) {
-        this.logger.warn(
-          `Payment verification failed for enrollment: ${enrollmentId}`
-        );
-        throw new BadRequestException("Invalid payment signature");
+      if (isDevelopment && isMockPayment) {
+        this.logger.warn(`Skipping signature verification for mock payment in development: ${razorpayPaymentId}`);
+      } else {
+        const generatedSignature = crypto
+          .createHmac(
+            "sha256",
+            this.configService.get<string>("RAZORPAY_KEY_SECRET")
+          )
+          .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+          .digest("hex");
+
+        if (generatedSignature !== razorpaySignature) {
+          this.logger.warn(
+            `Payment verification failed for enrollment: ${enrollmentId}`
+          );
+          throw new BadRequestException("Invalid payment signature");
+        }
       }
     } catch (error: any) {
       if (error instanceof BadRequestException) {
@@ -418,11 +426,22 @@ export class CoursesService {
       throw new InternalServerErrorException("Payment verification failed");
     }
 
-    // Fetch payment details from Razorpay to confirm
-    const payment = await this.razorpay.payments.fetch(razorpayPaymentId);
+    // Skip signature verification in development mode for mock payments
+    const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
+    const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
 
-    if (payment.status !== "captured") {
-      throw new BadRequestException("Payment not captured");
+    let paymentMethod = "mock";
+
+    if (isDevelopment && isMockPayment) {
+      this.logger.warn(`Skipping Razorpay fetch for mock payment in development: ${razorpayPaymentId}`);
+    } else {
+      // Fetch payment details from Razorpay to confirm
+      const payment = await this.razorpay.payments.fetch(razorpayPaymentId);
+
+      if (payment.status !== "captured") {
+        throw new BadRequestException("Payment not captured");
+      }
+      paymentMethod = payment.method;
     }
 
     // Create a transaction record
@@ -432,7 +451,7 @@ export class CoursesService {
         type: "INVESTMENT", // Using INVESTMENT as the closest type
         amount: enrollment.amountPaid,
         status: "COMPLETED",
-        paymentMethod: payment.method,
+        paymentMethod: paymentMethod,
         paymentReference: razorpayPaymentId,
         razorpayOrderId,
         razorpayPaymentId,

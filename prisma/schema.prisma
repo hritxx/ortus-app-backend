@@ -64,6 +64,11 @@ model User {
     portfolioSnapshots PortfolioSnapshot[]
     tokenTransactions  TokenTransaction[]
 
+    // NEW Relations for Courses, Consultancy, and Channels
+    courseEnrollments        CourseEnrollment[]
+    consultancySubscriptions ConsultancySubscription[]
+    oneOnOneSessions         OneOnOneSession[]
+
     @@index([email])
     @@index([phone])
     @@index([panNumber])
@@ -442,4 +447,316 @@ enum TokenTransactionType {
     REDEMPTION
     EXPIRY
     ADJUSTMENT
+}
+
+// NEW ENUMS FOR COURSES, CONSULTANCY, AND CHANNELS
+
+enum CourseType {
+    BOOTCAMP
+    COURSE
+    WORKSHOP
+}
+
+enum EnrollmentStatus {
+    PENDING
+    ACTIVE
+    COMPLETED
+    CANCELLED
+    EXPIRED
+}
+
+enum ConsultancyType {
+    SUBSCRIPTION  // Monthly/recurring subscription
+    ONE_TIME      // One-time purchase
+    SESSION       // Per-session booking
+}
+
+enum SubscriptionStatus {
+    PENDING
+    ACTIVE
+    PAUSED
+    CANCELLED
+    EXPIRED
+}
+
+enum SessionStatus {
+    SCHEDULED
+    IN_PROGRESS
+    COMPLETED
+    CANCELLED
+    NO_SHOW
+}
+
+enum ChannelType {
+    COURSE      // Course announcement channel
+    CONSULTANCY // Consultancy service channel
+}
+
+enum PostType {
+    ANNOUNCEMENT
+    STOCK_TIP
+    MEETING_LINK
+    RESOURCE
+}
+
+// NEW MODELS FOR COURSES, CONSULTANCY, AND CHANNELS
+
+model Course {
+    id          String   @id @default(cuid())
+    title       String
+    description String
+
+    // Course Details
+    thumbnail   String?     // URL to course image
+    type        CourseType  // BOOTCAMP, COURSE, WORKSHOP
+    category    String      // e.g., "Stock Trading", "Technical Analysis"
+    duration    Int         // Duration in days
+    startDate   DateTime?   // When course starts (null = on-demand)
+    endDate     DateTime?
+
+    // Pricing
+    price       Float
+    currency    String   @default("INR")
+
+    // Status
+    isActive    Boolean  @default(true)
+    maxStudents Int?     // null = unlimited
+
+    // Metadata
+    syllabus    Json?    // Course curriculum structure
+    instructor  String?  // Instructor name
+    metadata    Json?    // Additional course data
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    // Relations
+    enrollments CourseEnrollment[]
+    channel     Channel?
+
+    @@index([type])
+    @@index([category])
+    @@index([isActive])
+    @@map("courses")
+}
+
+model CourseEnrollment {
+    id        String @id @default(cuid())
+    userId    String
+    courseId  String
+
+    // Enrollment Status
+    status    EnrollmentStatus @default(PENDING)
+
+    // Payment Reference
+    transactionId String? @unique
+    amountPaid    Float
+
+    // Progress
+    progress      Int     @default(0) // 0-100 percentage
+    completedAt   DateTime?
+
+    // Timestamps
+    enrolledAt DateTime @default(now())
+    expiresAt  DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    course Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+    @@unique([userId, courseId])
+    @@index([userId])
+    @@index([courseId])
+    @@index([status])
+    @@map("course_enrollments")
+}
+
+model ConsultancyService {
+    id          String @id @default(cuid())
+    name        String
+    description String
+
+    // Service Type
+    type        ConsultancyType  // SUBSCRIPTION, ONE_TIME, SESSION
+
+    // Pricing
+    price       Float
+    currency    String  @default("INR")
+    duration    Int?    // Duration in days for subscriptions
+
+    // Features
+    features    String[]  // List of included features
+
+    // Status
+    isActive    Boolean @default(true)
+
+    // Metadata
+    metadata    Json?
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    // Relations
+    subscriptions ConsultancySubscription[]
+    channel       Channel?
+    sessions      OneOnOneSession[]
+
+    @@index([type])
+    @@index([isActive])
+    @@map("consultancy_services")
+}
+
+model ConsultancySubscription {
+    id        String @id @default(cuid())
+    userId    String
+    serviceId String
+
+    // Subscription Status
+    status    SubscriptionStatus @default(PENDING)
+
+    // Payment Reference
+    transactionId String? @unique
+    amountPaid    Float
+
+    // Subscription Period
+    startDate DateTime?
+    endDate   DateTime?
+
+    // Auto-renewal
+    autoRenew Boolean @default(false)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    service ConsultancyService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+    @@unique([userId, serviceId])
+    @@index([userId])
+    @@index([serviceId])
+    @@index([status])
+    @@map("consultancy_subscriptions")
+}
+
+model OneOnOneSession {
+    id        String @id @default(cuid())
+    userId    String
+    serviceId String
+
+    // Session Details
+    scheduledAt   DateTime
+    duration      Int      // Duration in minutes
+    status        SessionStatus @default(SCHEDULED)
+
+    // Meeting Details
+    meetingLink   String?  // Zoom/Meet link
+    notes         String?  // Session notes
+
+    // Payment
+    transactionId String? @unique
+    amountPaid    Float
+
+    // Timestamps
+    completedAt   DateTime?
+    cancelledAt   DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    service ConsultancyService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+    @@index([userId])
+    @@index([serviceId])
+    @@index([scheduledAt])
+    @@index([status])
+    @@map("one_on_one_sessions")
+}
+
+model Channel {
+    id          String @id @default(cuid())
+    name        String
+    description String?
+
+    // Channel Type & Source
+    type        ChannelType
+    courseId    String?    @unique
+    serviceId   String?    @unique
+
+    // Settings
+    isActive    Boolean @default(true)
+
+    // Metadata
+    thumbnail   String?
+    metadata    Json?
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    // Relations
+    course  Course?             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+    service ConsultancyService? @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+    posts   ChannelPost[]
+
+    @@index([type])
+    @@index([isActive])
+    @@map("channels")
+}
+
+model ChannelPost {
+    id        String @id @default(cuid())
+    channelId String
+
+    // Post Content
+    content   String    // Markdown content
+    type      PostType  @default(ANNOUNCEMENT)
+
+    // Attachments
+    attachments Json?   // Array of { type, url, name }
+
+    // Meeting/Event Details
+    meetingLink String?
+    eventTime   DateTime?
+
+    // Admin who posted
+    postedBy    String  // Admin user ID
+
+    // Status
+    isPinned    Boolean @default(false)
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    // Relations
+    channel   Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+    reactions PostReaction[]
+
+    @@index([channelId])
+    @@index([createdAt])
+    @@index([isPinned])
+    @@map("channel_posts")
+}
+
+model PostReaction {
+    id     String @id @default(cuid())
+    postId String
+    userId String
+
+    // Reaction
+    emoji  String  // Unicode emoji character
+
+    createdAt DateTime @default(now())
+
+    // Relations
+    post ChannelPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+    @@unique([postId, userId, emoji])
+    @@index([postId])
+    @@index([userId])
+    @@map("post_reactions")
 }

@@ -6,10 +6,13 @@ import {
   Param,
   UseGuards,
   Request,
+  Req,
   Headers,
   HttpCode,
   HttpStatus,
+  RawBodyRequest,
 } from "@nestjs/common";
+import type { Request as ExpressRequest } from "express";
 import { PaymentService } from "./payment.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import {
@@ -21,6 +24,12 @@ import {
 @Controller("payment")
 export class PaymentController {
   constructor(private paymentService: PaymentService) {}
+
+  @Get("config")
+  @UseGuards(JwtAuthGuard)
+  async getPaymentConfig() {
+    return this.paymentService.getPaymentConfig();
+  }
 
   @Post("create-order")
   @UseGuards(JwtAuthGuard)
@@ -42,10 +51,24 @@ export class PaymentController {
   @Post("webhook")
   @HttpCode(HttpStatus.OK)
   async handleWebhook(
+    @Req() req: RawBodyRequest<ExpressRequest>,
     @Body() payload: any,
     @Headers("x-razorpay-signature") signature: string
   ) {
-    return this.paymentService.handleWebhook(payload, signature);
+    const rawBody = req.rawBody?.toString("utf8") ?? "";
+    return this.paymentService.handleRazorpayWebhook(rawBody, payload, signature);
+  }
+
+  @Post("cashfree-webhook")
+  @HttpCode(HttpStatus.OK)
+  async handleCashfreeWebhook(
+    @Req() req: RawBodyRequest<ExpressRequest>,
+    @Body() payload: any,
+    @Headers("x-webhook-signature") signature: string,
+    @Headers("x-webhook-timestamp") timestamp: string
+  ) {
+    const rawBody = req.rawBody?.toString("utf8") ?? "";
+    return this.paymentService.handleCashfreeWebhook(rawBody, payload, signature, timestamp);
   }
 
   @Post("refund")

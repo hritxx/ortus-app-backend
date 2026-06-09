@@ -6,8 +6,11 @@ generator client {
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+    provider  = "postgresql"
+    // Pooled (PgBouncer) connection for serverless runtime — see .env.example.
+    url       = env("DATABASE_URL")
+    // Direct (non-pooled) connection used only for migrations.
+    directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -25,6 +28,12 @@ model User {
     state         String?
     pincode       String?
     dateOfBirth   String?
+
+    // Nominee Details
+    nomineeName     String?
+    nomineeRelation String?
+    nomineeDob      String?
+    nomineeAddress  String?
 
     // Professional Information
     occupation   String?
@@ -45,6 +54,7 @@ model User {
     phoneVerified    Boolean   @default(false)
     twoFactorEnabled Boolean   @default(false)
     isActive         Boolean   @default(true)
+    preferredLanguage String    @default("en")
 
     // Refresh Token for JWT
     refreshToken String?
@@ -64,10 +74,11 @@ model User {
     portfolioSnapshots PortfolioSnapshot[]
     tokenTransactions  TokenTransaction[]
 
-    // NEW Relations for Courses, Consultancy, and Channels
+    // Relations for Courses, Consultancy, and Channels
     courseEnrollments        CourseEnrollment[]
     consultancySubscriptions ConsultancySubscription[]
     oneOnOneSessions         OneOnOneSession[]
+    postComments             PostComment[]
 
     @@index([email])
     @@index([phone])
@@ -95,6 +106,12 @@ model InvestmentPlan {
     minPeriodicTokens Int @default(5) // Minimum random tokens per payment
     maxPeriodicTokens Int @default(50) // Maximum random tokens per payment
 
+    // Asset Allocation
+    equityAllocation Float @default(0)
+    debtAllocation   Float @default(0)
+    goldAllocation   Float @default(0)
+    cashAllocation   Float @default(0)
+
     metadata Json? // Additional plan metadata
     isActive Boolean @default(true)
 
@@ -102,7 +119,8 @@ model InvestmentPlan {
     updatedAt DateTime @updatedAt
 
     // Relations
-    investments Investment[]
+    investments       Investment[]
+    tokenTransactions TokenTransaction[]
 
     @@map("investment_plans")
 }
@@ -130,9 +148,10 @@ model Investment {
     updatedAt DateTime @updatedAt
 
     // Relations
-    user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-    plan         InvestmentPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
-    transactions Transaction[]
+    user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    plan              InvestmentPlan     @relation(fields: [planId], references: [id], onDelete: Restrict)
+    transactions      Transaction[]
+    tokenTransactions TokenTransaction[]
 
     @@index([userId])
     @@index([planId])
@@ -153,7 +172,13 @@ model Transaction {
     paymentMethod    String?
     paymentReference String?
 
-    // Razorpay Fields
+    // Payment Gateway Fields (Generic)
+    pgOrderId   String? @unique
+    pgPaymentId String? @unique
+    pgSignature String?
+    pgProvider  String? @default("CASHFREE")
+
+    // Legacy Razorpay Fields (Kept for backward compatibility)
     razorpayOrderId   String? @unique
     razorpayPaymentId String? @unique
     razorpaySignature String?
@@ -167,13 +192,16 @@ model Transaction {
     processedAt DateTime?
 
     // Relations
-    user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-    investment Investment? @relation(fields: [investmentId], references: [id], onDelete: SetNull)
+    user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    investment        Investment?        @relation(fields: [investmentId], references: [id], onDelete: SetNull)
+    tokenTransactions TokenTransaction[]
 
     @@index([userId])
     @@index([investmentId])
     @@index([status])
     @@index([type])
+    @@index([pgOrderId])
+    @@index([pgPaymentId])
     @@index([razorpayOrderId])
     @@index([razorpayPaymentId])
     @@map("transactions")
@@ -336,15 +364,19 @@ model TokenTransaction {
     description String?
 
     // Relations
-    investmentId String?
-    planId       String?
+    investmentId  String?
+    planId        String?
+    transactionId String?
 
     // Metadata
     metadata  Json?
     createdAt DateTime @default(now())
 
     // Relations
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+    user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+    investment  Investment?     @relation(fields: [investmentId], references: [id], onDelete: SetNull)
+    plan        InvestmentPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+    transaction Transaction?    @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
     @@index([userId])
     @@index([type])
@@ -352,7 +384,354 @@ model TokenTransaction {
     @@map("token_transactions")
 }
 
+model Admin {
+    id       String    @id @default(cuid())
+    email    String    @unique
+    password String
+    name     String
+    role     AdminRole @default(ADMIN)
+
+    isActive  Boolean   @default(true)
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    lastLogin DateTime?
+
+    @@map("admins")
+}
+
+model PlanMonthlyReturn {
+    id     String @id @default(cuid())
+    planId String
+
+    // Return Configuration
+    month           String // Format: YYYY-MM
+    returnPercent   Float
+    appliedAt       DateTime?
+    appliedByUserId String?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([planId, month])
+    @@index([planId])
+    @@index([month])
+    @@map("plan_monthly_returns")
+}
+
+// Models for Courses, Consultancy, and Channels
+
+model Coupon {
+    id              String             @id @default(cuid())
+    code            String             @unique
+    description     String?
+    discountPercent Float // 0-100
+    applicableTo    CouponApplicableTo // COURSE, CONSULTANCY, BOTH
+
+    // Scope — null means applicable to ALL courses/services
+    courseId  String?
+    serviceId String?
+
+    // Limits
+    isActive   Boolean   @default(true)
+    usageLimit Int? // null = unlimited
+    usageCount Int       @default(0)
+    expiresAt  DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([code])
+    @@index([isActive])
+    @@map("coupons")
+}
+
+model Course {
+    id          String @id @default(cuid())
+    title       String
+    description String
+
+    // Course Details
+    thumbnail String? // URL to course image
+    type      CourseType // BOOTCAMP, COURSE, WORKSHOP
+    category  String // e.g., "Stock Trading", "Technical Analysis"
+    duration  Int // Duration in days
+    startDate DateTime? // When course starts (null = on-demand)
+    endDate   DateTime?
+
+    // Pricing
+    price    Float
+    currency String @default("INR")
+
+    // Status
+    isActive    Boolean @default(true)
+    maxStudents Int? // null = unlimited
+
+    // KPI & Stats (admin-controlled metrics)
+    totalLessons      Int? // Total lesson count
+    totalModules      Int? // Total module count
+    averageRating     Float? @default(4.9) // Average course rating
+    estimatedStudents Int? // Display student count (for marketing, not actual enrollments)
+
+    // Course Details (what's included, etc.)
+    whatsIncluded String[] @default([]) // Features/benefits included in course
+    disclaimer    String? // Legal disclaimer text
+
+    // Metadata
+    syllabus   Json? // Course curriculum structure
+    instructor String? // Instructor name
+    metadata   Json? // Additional course data
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    enrollments CourseEnrollment[]
+    channel     Channel?
+    coursePages  CoursePage[]
+    webinars     Webinar[]
+
+    @@index([type])
+    @@index([category])
+    @@index([isActive])
+    @@map("courses")
+}
+
+model CourseEnrollment {
+    id       String @id @default(cuid())
+    userId   String
+    courseId String
+
+    // Enrollment Status
+    status EnrollmentStatus @default(PENDING)
+
+    // Payment Reference
+    transactionId String? @unique
+    amountPaid    Float
+
+    // Coupon
+    couponCode     String?
+    discountAmount Float   @default(0)
+
+    // Progress
+    progress    Int       @default(0) // 0-100 percentage
+    completedAt DateTime?
+
+    // Timestamps
+    enrolledAt DateTime  @default(now())
+    expiresAt  DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    course Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+    @@unique([userId, courseId])
+    @@index([userId])
+    @@index([courseId])
+    @@index([status])
+    @@map("course_enrollments")
+}
+
+model ConsultancyService {
+    id          String @id @default(cuid())
+    name        String
+    description String
+
+    // Service Type
+    type ConsultancyType // SUBSCRIPTION, ONE_TIME, SESSION
+
+    // Pricing
+    price    Float
+    currency String @default("INR")
+    duration Int? // Duration in days for subscriptions
+
+    // Features
+    features String[] // List of included features
+
+    // Status
+    isActive Boolean @default(true)
+
+    // Metadata
+    metadata Json?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    subscriptions ConsultancySubscription[]
+    channel       Channel?
+    sessions      OneOnOneSession[]
+
+    @@index([type])
+    @@index([isActive])
+    @@map("consultancy_services")
+}
+
+model ConsultancySubscription {
+    id        String @id @default(cuid())
+    userId    String
+    serviceId String
+
+    // Subscription Status
+    status SubscriptionStatus @default(PENDING)
+
+    // Payment Reference
+    transactionId String? @unique
+    amountPaid    Float
+
+    // Coupon
+    couponCode     String?
+    discountAmount Float   @default(0)
+
+    // Subscription Period
+    startDate DateTime?
+    endDate   DateTime?
+
+    // Auto-renewal
+    autoRenew Boolean @default(false)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    service ConsultancyService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+    @@unique([userId, serviceId])
+    @@index([userId])
+    @@index([serviceId])
+    @@index([status])
+    @@map("consultancy_subscriptions")
+}
+
+model OneOnOneSession {
+    id        String @id @default(cuid())
+    userId    String
+    serviceId String
+
+    // Session Details
+    scheduledAt DateTime
+    duration    Int // Duration in minutes
+    status      SessionStatus @default(SCHEDULED)
+
+    // Meeting Details
+    meetingLink String? // Zoom/Meet link
+    notes       String? // Session notes
+
+    // Payment
+    transactionId String? @unique
+    amountPaid    Float
+
+    // Timestamps
+    completedAt DateTime?
+    cancelledAt DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    service ConsultancyService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+    @@index([userId])
+    @@index([serviceId])
+    @@index([scheduledAt])
+    @@index([status])
+    @@map("one_on_one_sessions")
+}
+
+model Channel {
+    id          String  @id @default(cuid())
+    name        String
+    description String?
+
+    // Channel Type & Source
+    type      ChannelType
+    courseId  String?     @unique
+    serviceId String?     @unique
+
+    // Settings
+    isActive Boolean @default(true)
+
+    // Metadata
+    thumbnail String?
+    metadata  Json?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    course  Course?             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+    service ConsultancyService? @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+    posts   ChannelPost[]
+
+    @@index([type])
+    @@index([isActive])
+    @@map("channels")
+}
+
+model ChannelPost {
+    id        String @id @default(cuid())
+    channelId String
+
+    // Post Content
+    content String // Markdown content
+    type    PostType @default(ANNOUNCEMENT)
+
+    // Attachments
+    attachments Json? // Array of { type, url, name }
+
+    // Meeting/Event Details
+    meetingLink String?
+    eventTime   DateTime?
+
+    // Admin who posted
+    postedBy String // Admin user ID
+
+    // Status
+    isPinned Boolean @default(false)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    channel   Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+    reactions PostReaction[]
+    comments  PostComment[]
+
+    @@index([channelId])
+    @@index([createdAt])
+    @@index([isPinned])
+    @@map("channel_posts")
+}
+
+model PostReaction {
+    id     String @id @default(cuid())
+    postId String
+    userId String
+
+    // Reaction
+    emoji String // Unicode emoji character
+
+    createdAt DateTime @default(now())
+
+    // Relations
+    post ChannelPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+    @@unique([postId, userId, emoji])
+    @@index([postId])
+    @@index([userId])
+    @@map("post_reactions")
+}
+
 // Enums
+enum AdminRole {
+    ADMIN
+    SUPER_ADMIN
+}
+
 enum KycStatus {
     PENDING
     IN_REVIEW
@@ -389,6 +768,8 @@ enum TransactionType {
     FEE
     REFUND
     DIVIDEND
+    COURSE_ENROLLMENT
+    CONSULTANCY_SUBSCRIPTION
 }
 
 enum TransactionStatus {
@@ -449,7 +830,13 @@ enum TokenTransactionType {
     ADJUSTMENT
 }
 
-// NEW ENUMS FOR COURSES, CONSULTANCY, AND CHANNELS
+// Enums for Courses, Consultancy, and Channels
+
+enum CouponApplicableTo {
+    COURSE
+    CONSULTANCY
+    BOTH
+}
 
 enum CourseType {
     BOOTCAMP
@@ -466,9 +853,9 @@ enum EnrollmentStatus {
 }
 
 enum ConsultancyType {
-    SUBSCRIPTION  // Monthly/recurring subscription
-    ONE_TIME      // One-time purchase
-    SESSION       // Per-session booking
+    SUBSCRIPTION // Monthly/recurring subscription
+    ONE_TIME // One-time purchase
+    SESSION // Per-session booking
 }
 
 enum SubscriptionStatus {
@@ -488,7 +875,7 @@ enum SessionStatus {
 }
 
 enum ChannelType {
-    COURSE      // Course announcement channel
+    COURSE // Course announcement channel
     CONSULTANCY // Consultancy service channel
 }
 
@@ -499,264 +886,223 @@ enum PostType {
     RESOURCE
 }
 
-// NEW MODELS FOR COURSES, CONSULTANCY, AND CHANNELS
+// ── BFSI Course Page CMS Models ──
 
-model Course {
-    id          String   @id @default(cuid())
-    title       String
-    description String
+model CoursePage {
+    id       String @id @default(cuid())
+    courseId String
+    slug     String @unique // e.g., "bfsi-career-accelerator"
 
-    // Course Details
-    thumbnail   String?     // URL to course image
-    type        CourseType  // BOOTCAMP, COURSE, WORKSHOP
-    category    String      // e.g., "Stock Trading", "Technical Analysis"
-    duration    Int         // Duration in days
-    startDate   DateTime?   // When course starts (null = on-demand)
-    endDate     DateTime?
+    // Page Content
+    heroTitle    String // "CAREER ACCELERATOR"
+    heroSubtitle String // "Launch your Banking, Finance..."
+    heroCtaText  String @default("Enroll Now")
+    heroCtaLink  String? // Optional override
 
-    // Pricing
-    price       Float
-    currency    String   @default("INR")
+    // Offer
+    offerTitle       String?
+    offerDescription String?
+    offerPrice       Float? // Display price (original)
+    offerSalePrice   Float? // Sale price
+    offerValidTill   DateTime?
+    offerBadgeText   String? // "Limited Time Offer"
 
-    // Status
-    isActive    Boolean  @default(true)
-    maxStudents Int?     // null = unlimited
+    // Trust metrics
+    trustMetrics Json? // [{ label: "Students", value: "5000+" }, ...]
 
-    // Metadata
-    syllabus    Json?    // Course curriculum structure
-    instructor  String?  // Instructor name
-    metadata    Json?    // Additional course data
+    // Features grid
+    features Json? // [{ icon: "...", title: "...", description: "..." }]
 
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+    // SEO
+    metaTitle       String?
+    metaDescription String?
+    ogImage         String?
 
-    // Relations
-    enrollments CourseEnrollment[]
-    channel     Channel?
+    // Active theme slug (references frontend theme configs)
+    activeTheme String @default("bfsi-default")
 
-    @@index([type])
-    @@index([category])
-    @@index([isActive])
-    @@map("courses")
-}
-
-model CourseEnrollment {
-    id        String @id @default(cuid())
-    userId    String
-    courseId  String
-
-    // Enrollment Status
-    status    EnrollmentStatus @default(PENDING)
-
-    // Payment Reference
-    transactionId String? @unique
-    amountPaid    Float
-
-    // Progress
-    progress      Int     @default(0) // 0-100 percentage
-    completedAt   DateTime?
-
-    // Timestamps
-    enrolledAt DateTime @default(now())
-    expiresAt  DateTime?
-
+    isActive  Boolean  @default(true)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
     // Relations
-    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-    course Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+    course       Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+    modules      CourseModule[]
+    faqs         CourseFAQ[]
+    instructors  CourseInstructor[]
+    testimonials CourseTestimonial[]
+    projects     CourseProject[]
+    stages       CourseStage[]
 
-    @@unique([userId, courseId])
-    @@index([userId])
     @@index([courseId])
-    @@index([status])
-    @@map("course_enrollments")
+    @@index([slug])
+    @@index([isActive])
+    @@map("course_pages")
 }
 
-model ConsultancyService {
+model CourseModule {
     id          String @id @default(cuid())
-    name        String
+    coursePageId String
+
+    title       String   // "Banking Fundamentals"
+    description String?  // Module description
+    duration    String?  // "4 weeks"
+    topics      String[] // ["KYC", "Account Types", ...]
+    sortOrder   Int      @default(0)
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    coursePage CoursePage @relation(fields: [coursePageId], references: [id], onDelete: Cascade)
+
+    @@index([coursePageId])
+    @@index([sortOrder])
+    @@map("course_modules")
+}
+
+model CourseFAQ {
+    id          String @id @default(cuid())
+    coursePageId String
+
+    question  String
+    answer    String
+    sortOrder Int @default(0)
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    coursePage CoursePage @relation(fields: [coursePageId], references: [id], onDelete: Cascade)
+
+    @@index([coursePageId])
+    @@index([sortOrder])
+    @@map("course_faqs")
+}
+
+model CourseInstructor {
+    id          String @id @default(cuid())
+    coursePageId String
+
+    name       String
+    title      String  // "Senior Banking Analyst"
+    bio        String?
+    imageUrl   String?
+    linkedinUrl String?
+    experience String? // "15+ years"
+    speciality String? // "Credit Risk"
+    sortOrder  Int     @default(0)
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    coursePage CoursePage @relation(fields: [coursePageId], references: [id], onDelete: Cascade)
+
+    @@index([coursePageId])
+    @@index([sortOrder])
+    @@map("course_instructors")
+}
+
+model CourseTestimonial {
+    id          String @id @default(cuid())
+    coursePageId String
+
+    studentName String
+    role        String? // "Placed at HDFC Bank"
+    content     String
+    rating      Int     @default(5)
+    imageUrl    String?
+    videoUrl    String?
+    sortOrder   Int     @default(0)
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    coursePage CoursePage @relation(fields: [coursePageId], references: [id], onDelete: Cascade)
+
+    @@index([coursePageId])
+    @@index([sortOrder])
+    @@map("course_testimonials")
+}
+
+model CourseProject {
+    id          String @id @default(cuid())
+    coursePageId String
+
+    title       String   // "Loan Processing System"
     description String
+    category    String?  // "Banking", "Insurance"
+    skills      String[] // ["Credit Analysis", "Risk Assessment"]
+    sortOrder   Int      @default(0)
 
-    // Service Type
-    type        ConsultancyType  // SUBSCRIPTION, ONE_TIME, SESSION
-
-    // Pricing
-    price       Float
-    currency    String  @default("INR")
-    duration    Int?    // Duration in days for subscriptions
-
-    // Features
-    features    String[]  // List of included features
-
-    // Status
-    isActive    Boolean @default(true)
-
-    // Metadata
-    metadata    Json?
-
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
-
-    // Relations
-    subscriptions ConsultancySubscription[]
-    channel       Channel?
-    sessions      OneOnOneSession[]
-
-    @@index([type])
-    @@index([isActive])
-    @@map("consultancy_services")
-}
-
-model ConsultancySubscription {
-    id        String @id @default(cuid())
-    userId    String
-    serviceId String
-
-    // Subscription Status
-    status    SubscriptionStatus @default(PENDING)
-
-    // Payment Reference
-    transactionId String? @unique
-    amountPaid    Float
-
-    // Subscription Period
-    startDate DateTime?
-    endDate   DateTime?
-
-    // Auto-renewal
-    autoRenew Boolean @default(false)
-
+    isActive  Boolean  @default(true)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    // Relations
-    user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-    service ConsultancyService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+    coursePage CoursePage @relation(fields: [coursePageId], references: [id], onDelete: Cascade)
 
-    @@unique([userId, serviceId])
-    @@index([userId])
-    @@index([serviceId])
-    @@index([status])
-    @@map("consultancy_subscriptions")
+    @@index([coursePageId])
+    @@index([sortOrder])
+    @@map("course_projects")
 }
 
-model OneOnOneSession {
-    id        String @id @default(cuid())
-    userId    String
-    serviceId String
-
-    // Session Details
-    scheduledAt   DateTime
-    duration      Int      // Duration in minutes
-    status        SessionStatus @default(SCHEDULED)
-
-    // Meeting Details
-    meetingLink   String?  // Zoom/Meet link
-    notes         String?  // Session notes
-
-    // Payment
-    transactionId String? @unique
-    amountPaid    Float
-
-    // Timestamps
-    completedAt   DateTime?
-    cancelledAt   DateTime?
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    // Relations
-    user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-    service ConsultancyService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
-
-    @@index([userId])
-    @@index([serviceId])
-    @@index([scheduledAt])
-    @@index([status])
-    @@map("one_on_one_sessions")
-}
-
-model Channel {
+model CourseStage {
     id          String @id @default(cuid())
-    name        String
-    description String?
+    coursePageId String
 
-    // Channel Type & Source
-    type        ChannelType
-    courseId    String?    @unique
-    serviceId   String?    @unique
+    title       String   // "Learn", "Internship", "Placement", "Career Growth"
+    description String
+    icon        String?  // Lucide icon name
+    features    String[] // ["12 Modules", "Industry Projects", ...]
+    stageNumber Int      // 1, 2, 3, 4
 
-    // Settings
-    isActive    Boolean @default(true)
-
-    // Metadata
-    thumbnail   String?
-    metadata    Json?
-
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
-
-    // Relations
-    course  Course?             @relation(fields: [courseId], references: [id], onDelete: Cascade)
-    service ConsultancyService? @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-    posts   ChannelPost[]
-
-    @@index([type])
-    @@index([isActive])
-    @@map("channels")
-}
-
-model ChannelPost {
-    id        String @id @default(cuid())
-    channelId String
-
-    // Post Content
-    content   String    // Markdown content
-    type      PostType  @default(ANNOUNCEMENT)
-
-    // Attachments
-    attachments Json?   // Array of { type, url, name }
-
-    // Meeting/Event Details
-    meetingLink String?
-    eventTime   DateTime?
-
-    // Admin who posted
-    postedBy    String  // Admin user ID
-
-    // Status
-    isPinned    Boolean @default(false)
-
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
-
-    // Relations
-    channel   Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
-    reactions PostReaction[]
-
-    @@index([channelId])
-    @@index([createdAt])
-    @@index([isPinned])
-    @@map("channel_posts")
-}
-
-model PostReaction {
-    id     String @id @default(cuid())
-    postId String
-    userId String
-
-    // Reaction
-    emoji  String  // Unicode emoji character
-
+    isActive  Boolean  @default(true)
     createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    coursePage CoursePage @relation(fields: [coursePageId], references: [id], onDelete: Cascade)
+
+    @@index([coursePageId])
+    @@index([stageNumber])
+    @@map("course_stages")
+}
+
+model PostComment {
+    id        String   @id @default(cuid())
+    postId    String
+    userId    String
+    content   String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 
     // Relations
     post ChannelPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+    user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    @@unique([postId, userId, emoji])
     @@index([postId])
     @@index([userId])
-    @@map("post_reactions")
+    @@map("post_comments")
+}
+
+model Webinar {
+    id          String   @id @default(cuid())
+    title       String
+    description String?
+    scheduledAt DateTime
+    duration    Int // in minutes
+    meetingLink String // Zoom/Google Meet link
+
+    // courseId is optional. If null, it represents a global webinar.
+    courseId String?
+    course   Course? @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([courseId])
+    @@index([scheduledAt])
+    @@map("webinars")
 }

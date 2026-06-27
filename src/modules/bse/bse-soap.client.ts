@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
 import * as soap from "soap";
 import { BseConfig } from "./bse.config";
 import { SOAP } from "./bse.fields";
@@ -18,16 +18,18 @@ export function parsePipeResponse(raw: string): { code: string; message: string;
 @Injectable()
 export class BseSoapClient {
   private readonly logger = new Logger(BseSoapClient.name);
-  private client?: soap.Client;
+  private clientPromise?: Promise<soap.Client>;
 
   constructor(private readonly cfg: BseConfig) {}
 
   private async getClient(): Promise<soap.Client> {
-    if (!this.client) {
+    // Cache the PROMISE (not the resolved client) so concurrent callers share a
+    // single in-flight createClientAsync and never double-init / leak a client.
+    if (!this.clientPromise) {
       this.cfg.assertConfigured();
-      this.client = await soap.createClientAsync(this.cfg.soapOrderUrl + "?wsdl"); // VERIFY URL/WSDL
+      this.clientPromise = soap.createClientAsync(this.cfg.soapOrderUrl + "?wsdl"); // VERIFY URL/WSDL
     }
-    return this.client;
+    return this.clientPromise;
   }
 
   async getPassword(passKey: string): Promise<string> {
@@ -50,10 +52,12 @@ export class BseSoapClient {
     const [result] = await (client as any)[methodName]({
       EncryptedPassword: input.token, ClientCode: input.ucc, SchemeCd: input.schemeCode,
       Amount: input.amount, BuySell: input.buySell, MemberId: this.cfg.memberCode,
+      BuySellType: input.orderType, // VERIFY: BSE PDF (maps LUMPSUM/SIP -> BSE order type field)
     });
     const raw = result?.orderEntryParamResult ?? "";  // VERIFY result field
     const { code, message, payload } = parsePipeResponse(raw);
     if (code !== "100") mapBseError(code, message);
+    if (!payload) throw new InternalServerErrorException("BSE returned success but no order number");
     return { orderNumber: payload };
   }
 }

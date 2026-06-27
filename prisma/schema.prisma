@@ -56,6 +56,10 @@ model User {
     isActive         Boolean   @default(true)
     preferredLanguage String    @default("en")
 
+    // BSE Star MF
+    bseUcc          String?  @unique   // Unique Client Code (assigned once per investor)
+    fatcaRegistered Boolean  @default(false)
+
     // Refresh Token for JWT
     refreshToken String?
 
@@ -79,6 +83,7 @@ model User {
     consultancySubscriptions ConsultancySubscription[]
     oneOnOneSessions         OneOnOneSession[]
     postComments             PostComment[]
+    mfOrders                 MutualFundOrder[]
 
     @@index([email])
     @@index([phone])
@@ -1105,4 +1110,60 @@ model Webinar {
     @@index([courseId])
     @@index([scheduledAt])
     @@map("webinars")
+}
+
+// ── BSE Star MF Models ──
+
+model MutualFundOrder {
+  id            String        @id @default(cuid())
+  userId        String
+  bseOrderNumber String?      @unique          // returned by BSE at order entry
+  schemeCode    String                          // BSE scheme code
+  schemeName    String
+  amount        Float
+  type          MfOrderType   @default(LUMPSUM)
+  status        MfOrderStatus @default(PENDING_PAYMENT)
+  paymentUrl    String?                         // ICCL redirect (transient; surfaced to app)
+  folioNumber   String?                         // assigned post-allotment by RTA
+  units         Float?                          // assigned post-allotment
+  bseRemarks    String?                         // raw BSE message for ops/debugging
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("mutual_fund_orders")
+}
+
+model MfScheme {
+  id            String   @id @default(cuid())
+  schemeCode    String   @unique
+  schemeName    String
+  amcName       String?
+  category      String?                          // Equity / Debt / Hybrid / ELSS
+  isin          String?
+  minPurchase   Float?
+  sipAllowed    Boolean  @default(false)
+  nav           Float?
+  navDate       DateTime?
+  updatedAt     DateTime @updatedAt
+
+  @@index([category])
+  @@map("mf_schemes")
+}
+
+enum MfOrderType {
+  LUMPSUM
+  SIP
+}
+
+enum MfOrderStatus {
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  ALLOTTED
+  REJECTED
+  CANCELLED
 }

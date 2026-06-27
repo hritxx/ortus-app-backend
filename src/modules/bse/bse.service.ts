@@ -39,6 +39,30 @@ export class BseService {
     return { ucc, fatcaRegistered: fatca };
   }
 
+  async purchase(userId: string, dto: { schemeCode: string; schemeName: string; amount: number; type: "LUMPSUM" | "SIP" }) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.bseUcc) throw new BadRequestException("Please complete onboarding before investing.");
+
+    const token = await this.session.getToken("order");
+    const { orderNumber } = await this.soap.placeOrder({
+      token, ucc: user.bseUcc, schemeCode: dto.schemeCode, amount: dto.amount, buySell: "P", orderType: dto.type,
+    });
+
+    const paymentUrl = await this.getPaymentUrl(orderNumber, user.bseUcc, dto.amount);
+    const order = await this.prisma.mutualFundOrder.create({
+      data: { userId, bseOrderNumber: orderNumber, schemeCode: dto.schemeCode, schemeName: dto.schemeName,
+              amount: dto.amount, type: dto.type, status: "PENDING_PAYMENT", paymentUrl },
+    });
+    return { orderId: order.id, orderNumber, paymentUrl };
+  }
+
+  // Isolated so the payment-gateway call can be swapped/mocked. VERIFY vs BSE Payment Gateway service.
+  private async getPaymentUrl(orderNumber: string, ucc: string, amount: number): Promise<string> {
+    // For UAT, BSE returns a redirect URL from the payment-gateway method.
+    // Placeholder deterministic URL keeps the flow testable until that method is wired:
+    return `https://bsestarmfdemo.bseindia.com/pay?order=${orderNumber}&ucc=${ucc}`; // VERIFY: BSE PDF
+  }
+
   private assertKycComplete(user: any): void {
     const missing = ["panNumber", "bankAccount", "ifscCode"].filter((f) => !user[f]);
     if (missing.length) throw new BadRequestException(`Complete your KYC first (missing: ${missing.join(", ")})`);

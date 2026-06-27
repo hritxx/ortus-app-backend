@@ -81,11 +81,12 @@ export class BseService {
     // Notify the investor on a terminal transition. Failures here must NOT fail
     // the sync — the status is already persisted above.
     if (status !== order.status && (status === "ALLOTTED" || status === "REJECTED")) {
-      const title = status === "ALLOTTED" ? "Units allotted ✅" : "Order rejected";
+      const scheme = order.schemeName ?? "Your fund";
+      const title = status === "ALLOTTED" ? "Units allotted" : "Order rejected";
       const body =
         status === "ALLOTTED"
-          ? `${order.schemeName} units are now in your portfolio.`
-          : `${order.schemeName} could not be processed.`;
+          ? `${scheme} units are now in your portfolio.`
+          : `${scheme} could not be processed.`;
       try {
         await this.notify.pushToUser(order.userId, { title, body, data: { orderId: order.id } });
       } catch (e) {

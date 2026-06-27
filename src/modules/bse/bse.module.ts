@@ -23,7 +23,7 @@ import { NOTIFICATION_PORT } from "./bse-notification.port";
     BseRestClient,
     BseService,
     BseReconciliationProcessor,
-    BseNotificationAdapter,
+    // Single instance, bound to the port token (BseService injects NOTIFICATION_PORT).
     { provide: NOTIFICATION_PORT, useClass: BseNotificationAdapter },
   ],
   exports: [BseConfig, BseSoapClient, BseSessionService, BseService, BseReconciliationProcessor],

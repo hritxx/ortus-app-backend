@@ -14,6 +14,7 @@ async function createNestApp() {
   if (!app) {
     app = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
       logger: ["error", "warn", "log"],
+      rawBody: true, // capture raw body for webhook signature verification
     });
 
     // Enable CORS for mobile apps

@@ -18,6 +18,7 @@ import {
   CreateCourseDto,
   UpdateCourseDto,
   VerifyPaymentDto,
+  CreateWebinarDto,
 } from "./dto";
 import { CourseType, EnrollmentStatus } from "@prisma/client";
 
@@ -130,5 +131,18 @@ export class CoursesController {
   @UseGuards(JwtAuthGuard)
   async deleteCourse(@Param("id") courseId: string) {
     return this.coursesService.deleteCourse(courseId);
+  }
+
+  @Post("webinars")
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async createWebinar(@Request() req, @Body() createWebinarDto: CreateWebinarDto) {
+    return this.coursesService.createWebinar(req.user.id, createWebinarDto);
+  }
+
+  @Get("webinars/upcoming")
+  @UseGuards(JwtAuthGuard)
+  async getUpcomingWebinars(@Request() req) {
+    return this.coursesService.getUpcomingWebinars(req.user.id);
   }
 }

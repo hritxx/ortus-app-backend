@@ -17,6 +17,7 @@ import {
   CreateInvestmentDto,
   UpdateInvestmentDto,
   ProcessSIPDto,
+  WithdrawRequestDto,
 } from "./dto/investment.dto";
 
 @Controller("investments")
@@ -98,5 +99,34 @@ export class InvestmentController {
     @Body() processSIPDto: ProcessSIPDto
   ) {
     return this.investmentService.processSIPPayment(req.user.id, processSIPDto);
+  }
+
+  @Post("withdraw")
+  @HttpCode(HttpStatus.OK)
+  async createWithdrawalRequest(
+    @Request() req,
+    @Body() withdrawRequestDto: WithdrawRequestDto
+  ) {
+    return this.investmentService.createWithdrawalRequest(
+      req.user.id,
+      withdrawRequestDto
+    );
+  }
+
+  @Get("withdraw/pending")
+  async getPendingWithdrawals() {
+    return this.investmentService.getPendingWithdrawals();
+  }
+
+  @Post("withdraw/:transactionId/approve")
+  @HttpCode(HttpStatus.OK)
+  async approveWithdrawal(@Param("transactionId") transactionId: string) {
+    return this.investmentService.approveWithdrawal(transactionId);
+  }
+
+  @Post("withdraw/:transactionId/reject")
+  @HttpCode(HttpStatus.OK)
+  async rejectWithdrawal(@Param("transactionId") transactionId: string) {
+    return this.investmentService.rejectWithdrawal(transactionId);
   }
 }

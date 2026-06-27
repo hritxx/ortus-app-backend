@@ -9,13 +9,21 @@ import {
   CreateInvestmentDto,
   UpdateInvestmentDto,
   ProcessSIPDto,
+  WithdrawRequestDto,
 } from "./dto/investment.dto";
+import { calculateCompoundedValue } from "./compounding";
+import { NotificationService } from "../notification/notification.service";
+import { EmailService } from "../../common/services/email.service";
 
 @Injectable()
 export class InvestmentService {
   private readonly logger = new Logger(InvestmentService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationService: NotificationService,
+    private emailService: EmailService
+  ) {}
 
   async createInvestment(
     userId: string,
@@ -147,16 +155,28 @@ export class InvestmentService {
       where,
       include: {
         plan: true,
+        transactions: true,
       },
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    const updatedInvestments = investments.map((inv) => {
+      const compounded = calculateCompoundedValue(inv, inv.transactions);
+      return {
+        ...inv,
+        planName: inv.plan?.name,
+        currentValue: compounded.currentValue,
+        returns: compounded.returns,
+        returnsPercentage: compounded.returnsPercentage,
+      };
+    });
+
     return {
       success: true,
-      count: investments.length,
-      investments,
+      count: updatedInvestments.length,
+      investments: updatedInvestments,
     };
   }
 
@@ -181,9 +201,22 @@ export class InvestmentService {
       throw new NotFoundException("Investment not found");
     }
 
+    // Fetch all completed transactions for full compounding calculation
+    const allTransactions = await this.prisma.transaction.findMany({
+      where: { investmentId: investment.id },
+    });
+
+    const compounded = calculateCompoundedValue(investment, allTransactions);
+
     return {
       success: true,
-      investment,
+      investment: {
+        ...investment,
+        planName: investment.plan?.name,
+        currentValue: compounded.currentValue,
+        returns: compounded.returns,
+        returnsPercentage: compounded.returnsPercentage,
+      },
     };
   }
 
@@ -240,20 +273,64 @@ export class InvestmentService {
       },
       include: {
         plan: true,
+        transactions: true,
       },
     });
 
-    const totalInvested = investments.reduce(
+    const updatedInvestments = investments.map((inv) => {
+      const compounded = calculateCompoundedValue(inv, inv.transactions);
+      return {
+        ...inv,
+        planName: inv.plan?.name,
+        currentValue: compounded.currentValue,
+        returns: compounded.returns,
+        returnsPercentage: compounded.returnsPercentage,
+      };
+    });
+
+    const totalInvested = updatedInvestments.reduce(
       (sum, inv) => sum + Number(inv.amountInvested),
       0
     );
-    const currentValue = investments.reduce(
+    const currentValue = updatedInvestments.reduce(
       (sum, inv) => sum + Number(inv.currentValue),
       0
     );
     const totalReturns = currentValue - totalInvested;
     const returnsPercentage =
       totalInvested > 0 ? (totalReturns / totalInvested) * 100 : 0;
+
+    // Calculate asset allocation breakdown based on current value weights
+    let totalEquityValue = 0;
+    let totalDebtValue = 0;
+    let totalGoldValue = 0;
+    let totalCashValue = 0;
+
+    updatedInvestments.forEach((inv) => {
+      const val = inv.currentValue;
+      const plan = inv.plan;
+      totalEquityValue += val * (plan.equityAllocation / 100);
+      totalDebtValue += val * (plan.debtAllocation / 100);
+      totalGoldValue += val * (plan.goldAllocation / 100);
+      totalCashValue += val * (plan.cashAllocation / 100);
+    });
+
+    const totalAllocatedValue = totalEquityValue + totalDebtValue + totalGoldValue + totalCashValue;
+
+    const assetAllocation = {
+      equity: totalAllocatedValue > 0 ? Number(((totalEquityValue / totalAllocatedValue) * 100).toFixed(2)) : 0,
+      debt: totalAllocatedValue > 0 ? Number(((totalDebtValue / totalAllocatedValue) * 100).toFixed(2)) : 0,
+      gold: totalAllocatedValue > 0 ? Number(((totalGoldValue / totalAllocatedValue) * 100).toFixed(2)) : 0,
+      cash: totalAllocatedValue > 0 ? Number(((totalCashValue / totalAllocatedValue) * 100).toFixed(2)) : 0,
+    };
+
+    // If active investments exist but allocations are unconfigured (all zero), return a balanced fallback
+    if (totalAllocatedValue === 0 && updatedInvestments.length > 0) {
+      assetAllocation.equity = 40;
+      assetAllocation.debt = 30;
+      assetAllocation.gold = 15;
+      assetAllocation.cash = 15;
+    }
 
     // Get user's token balance
     const user = await this.prisma.user.findUnique({
@@ -275,10 +352,11 @@ export class InvestmentService {
         currentValue,
         totalReturns,
         returnsPercentage: Number(returnsPercentage.toFixed(2)),
-        totalInvestments: investments.length,
+        totalInvestments: updatedInvestments.length,
         tokenBalance: user?.tokenBalance || 0,
+        assetAllocation,
       },
-      investments,
+      investments: updatedInvestments,
       recentTokenTransactions: tokenTransactions,
     };
   }
@@ -304,24 +382,7 @@ export class InvestmentService {
       throw new BadRequestException("This is not a SIP investment");
     }
 
-    // Update investment amounts
-    const newAmountInvested = Number(investment.amountInvested) + amount;
-    const estimatedReturns =
-      (newAmountInvested * Number(investment.plan.interestRate)) / 100;
-    const newCurrentValue = newAmountInvested + estimatedReturns;
-
-    await this.prisma.investment.update({
-      where: { id: investmentId },
-      data: {
-        amountInvested: newAmountInvested,
-        currentValue: newCurrentValue,
-        returns: estimatedReturns,
-        returnsPercentage: investment.plan.interestRate,
-        nextSipDate: this.calculateNextSIPDate(investment.nextSipDate),
-      },
-    });
-
-    // Create transaction record
+    // Create transaction record first
     await this.prisma.transaction.create({
       data: {
         userId,
@@ -333,6 +394,32 @@ export class InvestmentService {
         razorpayPaymentId: paymentId,
         description: `SIP payment for ${investment.plan.name}`,
         processedAt: new Date(),
+      },
+    });
+
+    // Get all completed transactions to calculate dynamic compounded value
+    const allTransactions = await this.prisma.transaction.findMany({
+      where: { investmentId: investment.id, status: "COMPLETED" },
+    });
+
+    const compounded = calculateCompoundedValue(investment, allTransactions);
+    
+    const totalDeposits = allTransactions
+      .filter((tx) => tx.type === "INVESTMENT" || tx.type === "SIP_PAYMENT")
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const totalWithdrawals = allTransactions
+      .filter((tx) => tx.type === "WITHDRAWAL")
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const netInvested = Math.max(0, totalDeposits - totalWithdrawals);
+
+    await this.prisma.investment.update({
+      where: { id: investmentId },
+      data: {
+        amountInvested: netInvested,
+        currentValue: compounded.currentValue,
+        returns: compounded.returns,
+        returnsPercentage: compounded.returnsPercentage,
+        nextSipDate: this.calculateNextSIPDate(investment.nextSipDate),
       },
     });
 
@@ -465,6 +552,233 @@ export class InvestmentService {
       success: true,
       count: transactions.length,
       transactions,
+    };
+  }
+
+  async createWithdrawalRequest(userId: string, dto: WithdrawRequestDto) {
+    const { investmentId, amount } = dto;
+
+    const investment = await this.prisma.investment.findFirst({
+      where: { id: investmentId, userId },
+      include: { plan: true },
+    });
+
+    if (!investment) {
+      throw new NotFoundException("Investment not found");
+    }
+
+    // Fetch all completed transactions for full compounding calculation
+    const allTransactions = await this.prisma.transaction.findMany({
+      where: { investmentId },
+    });
+
+    const compounded = calculateCompoundedValue(investment, allTransactions);
+
+    if (amount > compounded.currentValue) {
+      throw new BadRequestException(
+        `Withdrawal amount of ₹${amount} exceeds the current investment value of ₹${compounded.currentValue}`
+      );
+    }
+
+    // Create withdrawal transaction in PENDING status
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        userId,
+        investmentId,
+        type: "WITHDRAWAL",
+        amount,
+        status: "PENDING",
+        description: `Withdrawal request for ${investment.plan.name}`,
+      },
+    });
+
+    return {
+      success: true,
+      message: "Withdrawal request raised successfully",
+      transaction,
+    };
+  }
+
+  async getPendingWithdrawals() {
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        type: "WITHDRAWAL",
+        status: "PENDING",
+      },
+      include: {
+        user: true,
+        investment: {
+          include: {
+            plan: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return {
+      success: true,
+      count: transactions.length,
+      transactions,
+    };
+  }
+
+  async approveWithdrawal(transactionId: string) {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        user: true,
+        investment: {
+          include: {
+            plan: true,
+          },
+        },
+      },
+    });
+
+    if (!transaction || transaction.type !== "WITHDRAWAL") {
+      throw new NotFoundException("Withdrawal transaction not found");
+    }
+
+    if (transaction.status !== "PENDING") {
+      throw new BadRequestException(`Withdrawal is already in ${transaction.status} state`);
+    }
+
+    // Mark transaction as COMPLETED
+    const updatedTransaction = await this.prisma.transaction.update({
+      where: { id: transactionId },
+      data: {
+        status: "COMPLETED",
+        processedAt: new Date(),
+      },
+    });
+
+    // Re-calculate the investment totals and update the Investment table cache
+    if (transaction.investment) {
+      const allTransactions = await this.prisma.transaction.findMany({
+        where: { investmentId: transaction.investmentId, status: "COMPLETED" },
+      });
+
+      const compounded = calculateCompoundedValue(transaction.investment, allTransactions);
+
+      const totalDeposits = allTransactions
+        .filter((tx) => tx.type === "INVESTMENT" || tx.type === "SIP_PAYMENT")
+        .reduce((sum, tx) => sum + tx.amount, 0);
+      const totalWithdrawals = allTransactions
+        .filter((tx) => tx.type === "WITHDRAWAL")
+        .reduce((sum, tx) => sum + tx.amount, 0);
+      const netInvested = Math.max(0, totalDeposits - totalWithdrawals);
+
+      // If the entire investment has been withdrawn (currentValue is 0), mark the investment as WITHDRAWN
+      const newStatus = compounded.currentValue <= 0 ? "WITHDRAWN" : "ACTIVE";
+
+      await this.prisma.investment.update({
+        where: { id: transaction.investmentId },
+        data: {
+          amountInvested: netInvested,
+          currentValue: compounded.currentValue,
+          returns: compounded.returns,
+          returnsPercentage: compounded.returnsPercentage,
+          status: newStatus as any,
+        },
+      });
+    }
+
+    // Send email to user
+    try {
+      await this.emailService.sendWithdrawalEmail(
+        transaction.user.email,
+        transaction.user.name || "Investor",
+        transaction.amount,
+        transaction.investment?.plan.name || "Investment Plan",
+        "APPROVED"
+      );
+    } catch (emailError) {
+      this.logger.error(`Failed to send withdrawal approval email to ${transaction.user.email}:`, emailError);
+    }
+
+    // Send Push & In-app Notification
+    try {
+      await this.notificationService.createNotification({
+        userId: transaction.userId,
+        title: "Withdrawal Approved 🎉",
+        body: `Your withdrawal of ₹${transaction.amount.toLocaleString()} from ${transaction.investment?.plan.name || "Investment"} has been approved and processed.`,
+        type: "SUCCESS",
+        category: "TRANSACTION",
+      });
+    } catch (pushError) {
+      this.logger.error("Failed to create approval notification:", pushError);
+    }
+
+    return {
+      success: true,
+      message: "Withdrawal request approved successfully",
+      transaction: updatedTransaction,
+    };
+  }
+
+  async rejectWithdrawal(transactionId: string) {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        user: true,
+        investment: {
+          include: {
+            plan: true,
+          },
+        },
+      },
+    });
+
+    if (!transaction || transaction.type !== "WITHDRAWAL") {
+      throw new NotFoundException("Withdrawal transaction not found");
+    }
+
+    if (transaction.status !== "PENDING") {
+      throw new BadRequestException(`Withdrawal is already in ${transaction.status} state`);
+    }
+
+    // Mark transaction as FAILED
+    const updatedTransaction = await this.prisma.transaction.update({
+      where: { id: transactionId },
+      data: {
+        status: "FAILED",
+        processedAt: new Date(),
+      },
+    });
+
+    // Send email to user
+    try {
+      await this.emailService.sendWithdrawalEmail(
+        transaction.user.email,
+        transaction.user.name || "Investor",
+        transaction.amount,
+        transaction.investment?.plan.name || "Investment Plan",
+        "REJECTED"
+      );
+    } catch (emailError) {
+      this.logger.error(`Failed to send withdrawal rejection email to ${transaction.user.email}:`, emailError);
+    }
+
+    // Send Push & In-app Notification
+    try {
+      await this.notificationService.createNotification({
+        userId: transaction.userId,
+        title: "Withdrawal Rejected",
+        body: `Your withdrawal request of ₹${transaction.amount.toLocaleString()} from ${transaction.investment?.plan.name || "Investment"} was rejected.`,
+        type: "ERROR",
+        category: "TRANSACTION",
+      });
+    } catch (pushError) {
+      this.logger.error("Failed to create rejection notification:", pushError);
+    }
+
+    return {
+      success: true,
+      message: "Withdrawal request rejected successfully",
+      transaction: updatedTransaction,
     };
   }
 }

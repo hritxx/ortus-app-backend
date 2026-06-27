@@ -2,192 +2,233 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  UnauthorizedException,
   Logger,
 } from "@nestjs/common";
+import * as crypto from "crypto";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../common/prisma/prisma.service";
-import Razorpay from "razorpay";
-import * as crypto from "crypto";
 import {
   CreateOrderDto,
   VerifyPaymentDto,
   RefundPaymentDto,
 } from "./dto/payment.dto";
+import { RazorpayGateway } from "./gateways/razorpay.gateway";
+import { CashfreeGateway } from "./gateways/cashfree.gateway";
+import { PaymentGateway } from "./payment-gateway.interface";
 
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
-  private razorpay: Razorpay;
 
   constructor(
     private prisma: PrismaService,
-    private configService: ConfigService
-  ) {
-    const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
-    const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
+    private configService: ConfigService,
+    private razorpayGateway: RazorpayGateway,
+    private cashfreeGateway: CashfreeGateway
+  ) {}
 
-    this.logger.log(`Initializing Razorpay with key_id: ${keyId ? keyId.substring(0, 10) + '...' : 'MISSING'}`);
+  getGateway(): PaymentGateway {
+    const provider = this.configService.get<string>("PAYMENT_GATEWAY") || "CASHFREE";
+    if (provider.toUpperCase() === "RAZORPAY") {
+      return this.razorpayGateway;
+    }
+    return this.cashfreeGateway;
+  }
 
-    this.razorpay = new Razorpay({
-      key_id: keyId,
-      key_secret: keySecret,
-    });
+  getGatewayName(): 'CASHFREE' | 'RAZORPAY' {
+    const provider = this.configService.get<string>("PAYMENT_GATEWAY") || "CASHFREE";
+    return provider.toUpperCase() === "RAZORPAY" ? "RAZORPAY" : "CASHFREE";
+  }
+
+  async getPaymentConfig() {
+    const provider = this.getGatewayName();
+    const isProd = this.configService.get<string>("CASHFREE_ENV") === "PROD";
+    const env = isProd ? "production" : "sandbox";
+    
+    if (provider === "RAZORPAY") {
+      return {
+        provider,
+        publicKey: this.configService.get<string>("RAZORPAY_KEY_ID"),
+        environment: this.configService.get<string>("NODE_ENV") || "development",
+      };
+    }
+
+    return {
+      provider,
+      publicKey: this.configService.get<string>("CASHFREE_APP_ID"),
+      environment: env,
+    };
   }
 
   async createOrder(userId: string, createOrderDto: CreateOrderDto) {
-    try {
-      const { amount, currency, receipt, notes } = createOrderDto;
-
-      // Generate short receipt if not provided (Razorpay max: 40 chars)
-      const shortReceipt =
-        receipt || `rcpt_${Date.now().toString().slice(-10)}`;
-
-      // Handle notes - can be string, object, or undefined
-      let parsedNotes = {};
-      if (notes) {
-        if (typeof notes === 'string') {
-          try {
-            parsedNotes = JSON.parse(notes);
-          } catch (e) {
-            this.logger.warn(`Failed to parse notes as JSON: ${notes}`);
-            parsedNotes = { raw: notes };
-          }
-        } else if (typeof notes === 'object') {
-          parsedNotes = notes;
-        }
-      }
-
-      const orderData = {
-        amount: Math.round(amount * 100), // Convert to paise (must be integer)
-        currency: currency || "INR",
-        receipt: shortReceipt,
-        notes: parsedNotes,
-      };
-
-      this.logger.log(`Creating Razorpay order: ${JSON.stringify(orderData)}`);
-
-      // Create Razorpay order
-      const order = await this.razorpay.orders.create(orderData);
-
-      this.logger.log(`Order created: ${order.id} for user: ${userId}`);
-
-      return {
-        success: true,
-        orderId: order.id,
-        amount: Number(order.amount) / 100, // Convert back to rupees
-        currency: order.currency,
-        receipt: order.receipt,
-        razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
-      };
-    } catch (error: any) {
-      this.logger.error(`Error creating Razorpay order: ${error?.message || error}`);
-      this.logger.error(`Error stack: ${error?.stack || 'No stack trace'}`);
-      throw new InternalServerErrorException(`Failed to create payment order: ${error?.message || 'Unknown error'}`);
-    }
+    const gateway = this.getGateway();
+    return gateway.createOrder(userId, createOrderDto);
   }
 
   async verifyPayment(userId: string, verifyPaymentDto: VerifyPaymentDto) {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } =
-      verifyPaymentDto;
+    const gateway = this.getGateway();
+    const result = await gateway.verifyPayment(userId, verifyPaymentDto);
 
-    try {
-      // Generate signature for verification
-      const generatedSignature = crypto
-        .createHmac(
-          "sha256",
-          this.configService.get<string>("RAZORPAY_KEY_SECRET")
-        )
-        .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-        .digest("hex");
+    // After verification, update the transaction if found in the database
+    const orderId = verifyPaymentDto.orderId || verifyPaymentDto.razorpayOrderId;
+    const paymentId = verifyPaymentDto.razorpayPaymentId || result.paymentId;
 
-      if (generatedSignature !== razorpaySignature) {
-        this.logger.warn(`Payment verification failed for user: ${userId}`);
-        throw new BadRequestException("Invalid payment signature");
-      }
-
-      // Fetch payment details from Razorpay
-      const payment = await this.razorpay.payments.fetch(razorpayPaymentId);
-
-      this.logger.log(
-        `Payment verified: ${razorpayPaymentId} for user: ${userId}`
-      );
-
-      return {
-        success: true,
-        verified: true,
-        paymentId: payment.id,
-        orderId: payment.order_id,
-        amount: Number(payment.amount) / 100,
-        currency: payment.currency,
-        status: payment.status,
-        method: payment.method,
-        createdAt: new Date(Number(payment.created_at) * 1000),
-      };
-    } catch (error) {
-      this.logger.error("Payment verification error:", error);
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new InternalServerErrorException("Payment verification failed");
+    if (result.verified) {
+      await this.handlePaymentCaptured(paymentId, orderId, this.getGatewayName());
+    } else {
+      await this.handlePaymentFailed(paymentId || orderId, this.getGatewayName());
     }
+
+    return result;
   }
 
-  async handleWebhook(payload: any, signature: string) {
-    try {
-      const webhookSecret = this.configService.get<string>(
-        "RAZORPAY_WEBHOOK_SECRET"
-      );
+  async refundPayment(userId: string, refundPaymentDto: RefundPaymentDto) {
+    const gateway = this.getGateway();
+    const result = await gateway.refundPayment(userId, refundPaymentDto);
 
-      // Verify webhook signature
+    // Update transaction status in DB for refund
+    const transaction = await this.prisma.transaction.findFirst({
+      where: {
+        OR: [
+          { pgPaymentId: refundPaymentDto.paymentId },
+          { pgOrderId: refundPaymentDto.paymentId },
+          { razorpayPaymentId: refundPaymentDto.paymentId },
+          { razorpayOrderId: refundPaymentDto.paymentId }
+        ]
+      },
+    });
+
+    if (transaction) {
+      await this.prisma.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          status: "REFUNDED",
+        },
+      });
+    }
+
+    return result;
+  }
+
+  async getPaymentDetails(paymentId: string) {
+    const gateway = this.getGateway();
+    return gateway.getPaymentDetails(paymentId);
+  }
+
+  /** Constant-time signature comparison. */
+  private safeEqual(a: string, b: string): boolean {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    if (ab.length !== bb.length) return false;
+    return crypto.timingSafeEqual(ab, bb);
+  }
+
+  async handleWebhook(rawBody: string, payload: any, signature: string) {
+    // Delegate to Razorpay webhook by default or read event structures to route
+    if (payload?.event && payload?.payload?.payment) {
+      return this.handleRazorpayWebhook(rawBody, payload, signature);
+    }
+    return this.handleCashfreeWebhook(rawBody, payload, signature, "");
+  }
+
+  // razorpay webhook — signature is HMAC-SHA256 (hex) over the RAW request body
+  async handleRazorpayWebhook(rawBody: string, payload: any, signature: string) {
+    try {
+      const webhookSecret =
+        this.configService.get<string>("RAZORPAY_WEBHOOK_SECRET") || "";
+
       const generatedSignature = crypto
         .createHmac("sha256", webhookSecret)
-        .update(JSON.stringify(payload))
+        .update(rawBody)
         .digest("hex");
 
-      if (generatedSignature !== signature) {
-        this.logger.warn("Invalid webhook signature");
-        throw new BadRequestException("Invalid webhook signature");
+      if (!signature || !this.safeEqual(generatedSignature, signature)) {
+        this.logger.warn("Invalid Razorpay webhook signature — rejected");
+        throw new UnauthorizedException("Invalid webhook signature");
       }
 
       const event = payload.event;
       const paymentEntity = payload.payload.payment.entity;
 
-      this.logger.log(
-        `Webhook received: ${event} for payment: ${paymentEntity.id}`
-      );
+      this.logger.log(`Razorpay Webhook: ${event} for payment: ${paymentEntity.id}`);
 
-      // Handle different webhook events
-      switch (event) {
-        case "payment.captured":
-          await this.handlePaymentCaptured(paymentEntity);
-          break;
-        case "payment.failed":
-          await this.handlePaymentFailed(paymentEntity);
-          break;
-        case "order.paid":
-          await this.handleOrderPaid(paymentEntity);
-          break;
-        default:
-          this.logger.log(`Unhandled webhook event: ${event}`);
+      if (event === "payment.captured") {
+        await this.handlePaymentCaptured(paymentEntity.id, paymentEntity.order_id, "RAZORPAY");
+      } else if (event === "payment.failed") {
+        await this.handlePaymentFailed(paymentEntity.id, "RAZORPAY");
       }
 
-      return {
-        success: true,
-        message: "Webhook processed successfully",
-      };
+      return { success: true };
     } catch (error) {
-      this.logger.error("Webhook processing error:", error);
+      this.logger.error("Razorpay webhook error:", error);
       throw error;
     }
   }
 
-  private async handlePaymentCaptured(paymentEntity: any) {
-    this.logger.log(`Payment captured: ${paymentEntity.id}`);
+  // cashfree webhook — signature is HMAC-SHA256 (base64) over (timestamp + RAW body)
+  async handleCashfreeWebhook(
+    rawBody: string,
+    payload: any,
+    signature: string,
+    timestamp: string
+  ) {
+    try {
+      const secretKey =
+        this.configService.get<string>("CASHFREE_SECRET_KEY") || "";
+
+      if (!signature || !timestamp) {
+        this.logger.warn("Cashfree webhook missing signature/timestamp — rejected");
+        throw new UnauthorizedException("Missing webhook signature");
+      }
+
+      const computedSignature = crypto
+        .createHmac("sha256", secretKey)
+        .update(timestamp + rawBody)
+        .digest("base64");
+
+      if (!this.safeEqual(computedSignature, signature)) {
+        this.logger.warn("Cashfree webhook signature mismatch — rejected");
+        throw new UnauthorizedException("Invalid webhook signature");
+      }
+
+      const { data } = payload;
+      if (!data || !data.order || !data.payment) {
+        this.logger.warn("Invalid Cashfree webhook payload structure");
+        return { success: false };
+      }
+
+      const orderId = data.order.order_id;
+      const paymentId = data.payment.cf_payment_id;
+      const paymentStatus = data.payment.payment_status;
+
+      this.logger.log(`Cashfree Webhook: status ${paymentStatus} for order: ${orderId}`);
+
+      if (paymentStatus === "SUCCESS") {
+        await this.handlePaymentCaptured(paymentId, orderId, "CASHFREE");
+      } else if (paymentStatus === "FAILED" || paymentStatus === "USER_DROPPED") {
+        await this.handlePaymentFailed(paymentId || orderId, "CASHFREE");
+      }
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error("Cashfree webhook error:", error);
+      throw error;
+    }
+  }
+
+  private async handlePaymentCaptured(paymentId: string, orderId: string, provider: 'RAZORPAY' | 'CASHFREE') {
+    this.logger.log(`Payment captured: ${paymentId} via ${provider}`);
 
     // Update transaction status in database
     const transaction = await this.prisma.transaction.findFirst({
       where: {
-        razorpayPaymentId: paymentEntity.id,
+        OR: [
+          { pgOrderId: orderId },
+          { razorpayOrderId: orderId },
+          { pgPaymentId: paymentId },
+          { razorpayPaymentId: paymentId }
+        ]
       },
     });
 
@@ -196,18 +237,25 @@ export class PaymentService {
         where: { id: transaction.id },
         data: {
           status: "COMPLETED",
+          pgPaymentId: paymentId,
+          pgProvider: provider,
           processedAt: new Date(),
         },
       });
     }
   }
 
-  private async handlePaymentFailed(paymentEntity: any) {
-    this.logger.log(`Payment failed: ${paymentEntity.id}`);
+  private async handlePaymentFailed(paymentId: string, provider: 'RAZORPAY' | 'CASHFREE') {
+    this.logger.log(`Payment failed: ${paymentId} via ${provider}`);
 
     const transaction = await this.prisma.transaction.findFirst({
       where: {
-        razorpayPaymentId: paymentEntity.id,
+        OR: [
+          { pgPaymentId: paymentId },
+          { pgOrderId: paymentId },
+          { razorpayPaymentId: paymentId },
+          { razorpayOrderId: paymentId }
+        ]
       },
     });
 
@@ -218,86 +266,6 @@ export class PaymentService {
           status: "FAILED",
         },
       });
-    }
-  }
-
-  private async handleOrderPaid(paymentEntity: any) {
-    this.logger.log(`Order paid: ${paymentEntity.order_id}`);
-    // Additional logic for order completion
-  }
-
-  async refundPayment(userId: string, refundPaymentDto: RefundPaymentDto) {
-    try {
-      const { paymentId, amount, reason } = refundPaymentDto;
-
-      // Fetch original payment
-      const payment = await this.razorpay.payments.fetch(paymentId);
-
-      if (!payment) {
-        throw new BadRequestException("Payment not found");
-      }
-
-      // Create refund
-      const refund = await this.razorpay.payments.refund(paymentId, {
-        amount: amount ? amount * 100 : undefined, // Partial refund if amount specified
-        notes: {
-          reason: reason || "Customer requested refund",
-        },
-      });
-
-      // Update transaction in database
-      const transaction = await this.prisma.transaction.findFirst({
-        where: {
-          razorpayPaymentId: paymentId,
-        },
-      });
-
-      if (transaction) {
-        await this.prisma.transaction.update({
-          where: { id: transaction.id },
-          data: {
-            status: "REFUNDED",
-          },
-        });
-      }
-
-      this.logger.log(
-        `Refund processed: ${refund.id} for payment: ${paymentId}`
-      );
-
-      return {
-        success: true,
-        refundId: refund.id,
-        amount: Number(refund.amount) / 100,
-        status: refund.status,
-      };
-    } catch (error) {
-      this.logger.error("Refund error:", error);
-      throw new InternalServerErrorException("Refund processing failed");
-    }
-  }
-
-  async getPaymentDetails(paymentId: string) {
-    try {
-      const payment = await this.razorpay.payments.fetch(paymentId);
-
-      return {
-        success: true,
-        payment: {
-          id: payment.id,
-          orderId: payment.order_id,
-          amount: Number(payment.amount) / 100,
-          currency: payment.currency,
-          status: payment.status,
-          method: payment.method,
-          email: payment.email,
-          contact: payment.contact,
-          createdAt: new Date(Number(payment.created_at) * 1000),
-        },
-      };
-    } catch (error) {
-      this.logger.error("Error fetching payment details:", error);
-      throw new InternalServerErrorException("Failed to fetch payment details");
     }
   }
 }

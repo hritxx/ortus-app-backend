@@ -31,6 +31,10 @@ export class ChannelsService {
       return false;
     }
 
+    if (!channel.courseId && !channel.serviceId) {
+      return true; // Global channel, accessible to all users!
+    }
+
     if (channel.courseId) {
       // Check course enrollment
       const enrollment = await this.prisma.courseEnrollment.findUnique({
@@ -86,6 +90,7 @@ export class ChannelsService {
         OR: [
           { courseId: { in: courseIds } },
           { serviceId: { in: serviceIds } },
+          { courseId: null, serviceId: null }, // Global channels accessible to all
         ],
       },
       include: {
@@ -627,6 +632,92 @@ export class ChannelsService {
     return {
       success: true,
       post: updatedPost,
+    };
+  }
+
+  /**
+   * Add a comment to a broadcast post
+   */
+  async addComment(userId: string, postId: string, content: string) {
+    const post = await this.prisma.channelPost.findUnique({
+      where: { id: postId },
+    });
+
+    if (!post) {
+      throw new NotFoundException("Post not found");
+    }
+
+    // Verify user has access to the channel
+    const hasAccess = await this.checkChannelAccess(userId, post.channelId);
+    if (!hasAccess) {
+      throw new ForbiddenException("You do not have access to this channel");
+    }
+
+    const comment = await this.prisma.postComment.create({
+      data: {
+        postId,
+        userId,
+        content,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            kycStatus: true,
+          },
+        },
+      },
+    });
+
+    this.logger.log(`Comment ${comment.id} added to post ${postId} by user ${userId}`);
+
+    return {
+      success: true,
+      comment,
+    };
+  }
+
+  /**
+   * Get all comments for a post
+   */
+  async getPostComments(userId: string, postId: string) {
+    const post = await this.prisma.channelPost.findUnique({
+      where: { id: postId },
+    });
+
+    if (!post) {
+      throw new NotFoundException("Post not found");
+    }
+
+    // Verify user has access to the channel
+    const hasAccess = await this.checkChannelAccess(userId, post.channelId);
+    if (!hasAccess) {
+      throw new ForbiddenException("You do not have access to this channel");
+    }
+
+    const comments = await this.prisma.postComment.findMany({
+      where: { postId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            kycStatus: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+    return {
+      success: true,
+      count: comments.length,
+      comments,
     };
   }
 }

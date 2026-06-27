@@ -122,3 +122,5 @@ temp/
 
 # Railway
 railway.json
+
+*.bak

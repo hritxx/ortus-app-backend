@@ -16,8 +16,7 @@ import {
 } from "@nestjs/common";
 import { ChannelsService } from "./channels.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { CreatePostDto, UpdatePostDto } from "./dto/create-post.dto";
-import { ReactionDto } from "./dto/reaction.dto";
+import { CreatePostDto, UpdatePostDto, CreateCommentDto, ReactionDto } from "./dto";
 
 @Controller("channels")
 @UseGuards(JwtAuthGuard)
@@ -157,5 +156,30 @@ export class ChannelsController {
     @Param("postId") postId: string
   ) {
     return this.channelsService.togglePinPost(req.user.id, channelId, postId);
+  }
+
+  /**
+   * Add a comment to a broadcast post
+   */
+  @Post("posts/:postId/comments")
+  @HttpCode(HttpStatus.CREATED)
+  async addComment(
+    @Request() req,
+    @Param("postId") postId: string,
+    @Body() createCommentDto: CreateCommentDto
+  ) {
+    return this.channelsService.addComment(
+      req.user.id,
+      postId,
+      createCommentDto.content
+    );
+  }
+
+  /**
+   * Get comments for a post
+   */
+  @Get("posts/:postId/comments")
+  async getPostComments(@Request() req, @Param("postId") postId: string) {
+    return this.channelsService.getPostComments(req.user.id, postId);
   }
 }

@@ -41,7 +41,8 @@ export class BseService {
 
   async purchase(userId: string, dto: { schemeCode: string; schemeName: string; amount: number; type: "LUMPSUM" | "SIP" }) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.bseUcc) throw new BadRequestException("Please complete onboarding before investing.");
+    if (!user) throw new BadRequestException("User not found");
+    if (!user.bseUcc) throw new BadRequestException("Please complete onboarding before investing.");
 
     const token = await this.session.getToken("order");
     const { orderNumber } = await this.soap.placeOrder({
@@ -57,10 +58,9 @@ export class BseService {
   }
 
   // Isolated so the payment-gateway call can be swapped/mocked. VERIFY vs BSE Payment Gateway service.
+  // Placeholder ICCL redirect; becomes a real async BSE payment-gateway call (VERIFY: BSE PDF).
   private async getPaymentUrl(orderNumber: string, ucc: string, amount: number): Promise<string> {
-    // For UAT, BSE returns a redirect URL from the payment-gateway method.
-    // Placeholder deterministic URL keeps the flow testable until that method is wired:
-    return `https://bsestarmfdemo.bseindia.com/pay?order=${orderNumber}&ucc=${ucc}`; // VERIFY: BSE PDF
+    return `https://bsestarmfdemo.bseindia.com/pay?order=${orderNumber}&ucc=${ucc}&amt=${amount}`; // VERIFY: BSE PDF
   }
 
   private assertKycComplete(user: any): void {

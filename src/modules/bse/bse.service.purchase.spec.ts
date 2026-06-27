@@ -18,9 +18,10 @@ describe("BseService.purchase", () => {
     const { svc, prisma, soap, session } = make();
     const res = await svc.purchase("u1", { schemeCode: "S1", schemeName: "Fund", amount: 500, type: "LUMPSUM" });
     expect(session.getToken).toHaveBeenCalledWith("order");
-    expect(soap.placeOrder).toHaveBeenCalledWith(expect.objectContaining({ ucc: "UCC1", schemeCode: "S1", amount: 500, buySell: "P" }));
+    expect(soap.placeOrder).toHaveBeenCalledWith(expect.objectContaining({ ucc: "UCC1", schemeCode: "S1", amount: 500, buySell: "P", orderType: "LUMPSUM" }));
     expect(prisma.mutualFundOrder.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING_PAYMENT", bseOrderNumber: "BSE999" }) }));
     expect(res).toMatchObject({ orderNumber: "BSE999" });
+    expect(res.orderId).toBe("o1");
     expect(res.paymentUrl).toContain("BSE999");
   });
 

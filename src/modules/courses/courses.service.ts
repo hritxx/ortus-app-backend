@@ -8,8 +8,9 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../common/prisma/prisma.service";
-import { CreateCourseDto, UpdateCourseDto, VerifyPaymentDto } from "./dto";
+import { CreateCourseDto, UpdateCourseDto, VerifyPaymentDto, CreateWebinarDto } from "./dto";
 import { CourseType, EnrollmentStatus } from "@prisma/client";
+import { NotificationService } from "../notification/notification.service";
 import Razorpay from "razorpay";
 import * as crypto from "crypto";
 
@@ -20,7 +21,8 @@ export class CoursesService {
 
   constructor(
     private prisma: PrismaService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private notificationService: NotificationService
   ) {
     const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
     const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
@@ -394,14 +396,13 @@ export class CoursesService {
       throw new BadRequestException("Enrollment is already active");
     }
 
-    // Verify Razorpay signature
-    try {
-      // Skip signature verification in development mode for mock payments
-      const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
-      const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
+    // Check if we're in development mode
+    const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
 
-      if (isDevelopment && isMockPayment) {
-        this.logger.warn(`Skipping signature verification for mock payment in development: ${razorpayPaymentId}`);
+    // Verify Razorpay signature (skip in development for easier testing)
+    try {
+      if (isDevelopment) {
+        this.logger.warn(`Skipping signature verification in development mode for: ${razorpayPaymentId}`);
       } else {
         const generatedSignature = crypto
           .createHmac(
@@ -426,8 +427,7 @@ export class CoursesService {
       throw new InternalServerErrorException("Payment verification failed");
     }
 
-    // Skip signature verification in development mode for mock payments
-    const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
+    // Check if this is a mock payment (for skipping Razorpay API calls)
     const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
 
     let paymentMethod = "mock";
@@ -743,6 +743,113 @@ export class CoursesService {
     return {
       success: true,
       message: "Course deleted successfully",
+    };
+  }
+
+  async createWebinar(adminId: string, dto: CreateWebinarDto) {
+    const { title, description, scheduledAt, duration, meetingLink, courseId } = dto;
+
+    if (courseId) {
+      const course = await this.prisma.course.findUnique({
+        where: { id: courseId },
+      });
+      if (!course) {
+        throw new NotFoundException("Course not found");
+      }
+    }
+
+    const webinar = await this.prisma.webinar.create({
+      data: {
+        title,
+        description,
+        scheduledAt: new Date(scheduledAt),
+        duration,
+        meetingLink,
+        courseId: courseId || null,
+      },
+    });
+
+    this.logger.log(`Webinar created: ${webinar.id} (${title}) by admin ${adminId}`);
+
+    // Trigger push notifications asynchronously
+    setTimeout(async () => {
+      try {
+        if (courseId) {
+          const enrollments = await this.prisma.courseEnrollment.findMany({
+            where: { courseId, status: "ACTIVE" },
+            select: { userId: true },
+          });
+
+          for (const enr of enrollments) {
+            await this.notificationService.createNotification({
+              userId: enr.userId,
+              title: "New Masterclass Scheduled 🎓",
+              body: `A new live session "${title}" is scheduled for your course on ${new Date(scheduledAt).toLocaleString()}`,
+              type: "INFO",
+              category: "INVESTMENT",
+              data: { webinarId: webinar.id, meetingLink },
+            });
+          }
+        } else {
+          const users = await this.prisma.user.findMany({
+            where: { isActive: true },
+            select: { id: true },
+          });
+
+          for (const u of users) {
+            await this.notificationService.createNotification({
+              userId: u.id,
+              title: "New Live Webinar Scheduled 📅",
+              body: `Join our global webinar "${title}" on ${new Date(scheduledAt).toLocaleString()}`,
+              type: "INFO",
+              category: "SYSTEM",
+              data: { webinarId: webinar.id, meetingLink },
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to dispatch webinar notifications:", err);
+      }
+    }, 100);
+
+    return {
+      success: true,
+      webinar,
+    };
+  }
+
+  async getUpcomingWebinars(userId: string) {
+    const enrollments = await this.prisma.courseEnrollment.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { courseId: true },
+    });
+    const courseIds = enrollments.map((e) => e.courseId);
+
+    const upcoming = await this.prisma.webinar.findMany({
+      where: {
+        isActive: true,
+        scheduledAt: { gte: new Date() },
+        OR: [
+          { courseId: null },
+          { courseId: { in: courseIds } },
+        ],
+      },
+      include: {
+        course: {
+          select: {
+            title: true,
+          },
+        },
+      },
+      orderBy: {
+        scheduledAt: "asc",
+      },
+    });
+
+    return {
+      success: true,
+      count: upcoming.length,
+      webinars: upcoming,
     };
   }
 }

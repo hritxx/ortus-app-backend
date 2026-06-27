@@ -24,6 +24,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
+    "seed:courses": "ts-node prisma/seed-courses.ts",
     "vercel-build": "npm run prisma:generate && npm run build"
   },
   "dependencies": {

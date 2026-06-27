@@ -156,30 +156,10 @@ export class AuthService {
       success: true,
       message: "Email verified successfully",
       ...tokens,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        phone: user.phone,
-        emailVerified: user.emailVerified,
-        phoneVerified: user.phoneVerified,
-        kycStatus: user.kycStatus,
-        tokenBalance: user.tokenBalance,
-        panNumber: user.panNumber,
-        aadhaarNumber: user.aadhaarNumber,
-        address: user.address,
-        city: user.city,
-        state: user.state,
-        pincode: user.pincode,
-        dateOfBirth: user.dateOfBirth,
-        occupation: user.occupation,
-        annualIncome: user.annualIncome,
-        bankAccount: user.bankAccount,
-        ifscCode: user.ifscCode,
-        bankName: user.bankName,
-        accountHolder: user.accountHolder,
-        createdAt: user.createdAt,
-      },
+      user: (() => {
+        const { password, refreshToken, ...u } = user;
+        return u;
+      })(),
     };
   }
 
@@ -227,30 +207,10 @@ export class AuthService {
       success: true,
       message: "Login successful",
       ...tokens,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        phone: user.phone,
-        emailVerified: user.emailVerified,
-        phoneVerified: user.phoneVerified,
-        kycStatus: user.kycStatus,
-        tokenBalance: user.tokenBalance,
-        panNumber: user.panNumber,
-        aadhaarNumber: user.aadhaarNumber,
-        address: user.address,
-        city: user.city,
-        state: user.state,
-        pincode: user.pincode,
-        dateOfBirth: user.dateOfBirth,
-        occupation: user.occupation,
-        annualIncome: user.annualIncome,
-        bankAccount: user.bankAccount,
-        ifscCode: user.ifscCode,
-        bankName: user.bankName,
-        accountHolder: user.accountHolder,
-        createdAt: user.createdAt,
-      },
+      user: (() => {
+        const { password, refreshToken, ...u } = user;
+        return u;
+      })(),
     };
   }
 
@@ -521,38 +481,14 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        emailVerified: true,
-        phoneVerified: true,
-        kycStatus: true,
-        tokenBalance: true,
-        panNumber: true,
-        aadhaarNumber: true,
-        address: true,
-        city: true,
-        state: true,
-        pincode: true,
-        dateOfBirth: true,
-        occupation: true,
-        annualIncome: true,
-        bankAccount: true,
-        ifscCode: true,
-        bankName: true,
-        accountHolder: true,
-        createdAt: true,
-        updatedAt: true,
-      },
     });
 
     if (!user) {
       throw new NotFoundException("User not found");
     }
 
-    return user;
+    const { password, refreshToken, ...result } = user;
+    return result;
   }
 
   async updateProfile(userId: string, updateProfileDto: UpdateProfileDto) {
@@ -603,71 +539,25 @@ export class AuthService {
 
     // If no fields need updating, return current user
     if (Object.keys(updateData).length === 0) {
+      const { password, refreshToken, ...result } = user;
       return {
         success: true,
         message: "Profile is already up to date",
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          phone: user.phone,
-          emailVerified: user.emailVerified,
-          phoneVerified: user.phoneVerified,
-          kycStatus: user.kycStatus,
-          tokenBalance: user.tokenBalance,
-          panNumber: user.panNumber,
-          aadhaarNumber: user.aadhaarNumber,
-          address: user.address,
-          city: user.city,
-          state: user.state,
-          pincode: user.pincode,
-          dateOfBirth: user.dateOfBirth,
-          occupation: user.occupation,
-          annualIncome: user.annualIncome,
-          bankAccount: user.bankAccount,
-          ifscCode: user.ifscCode,
-          bankName: user.bankName,
-          accountHolder: user.accountHolder,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        },
+        user: result,
       };
     }
 
     const updatedUser = await this.prisma.user.update({
       where: { id: userId },
       data: updateData,
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        emailVerified: true,
-        phoneVerified: true,
-        kycStatus: true,
-        tokenBalance: true,
-        panNumber: true,
-        aadhaarNumber: true,
-        address: true,
-        city: true,
-        state: true,
-        pincode: true,
-        dateOfBirth: true,
-        occupation: true,
-        annualIncome: true,
-        bankAccount: true,
-        ifscCode: true,
-        bankName: true,
-        accountHolder: true,
-        createdAt: true,
-        updatedAt: true,
-      },
     });
+
+    const { password: pw, refreshToken: rt, ...result } = updatedUser;
 
     return {
       success: true,
       message: "Profile updated successfully",
-      user: updatedUser,
+      user: result,
     };
   }
 

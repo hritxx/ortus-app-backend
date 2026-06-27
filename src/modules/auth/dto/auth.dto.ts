@@ -116,6 +116,22 @@ export class CompleteKycDto {
   @IsOptional()
   @IsString()
   accountHolder?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeName?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeRelation?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeDob?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeAddress?: string;
 }
 
 export class UpdateProfileDto {
@@ -187,4 +203,24 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   accountHolder?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeName?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeRelation?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeDob?: string;
+
+  @IsOptional()
+  @IsString()
+  nomineeAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  preferredLanguage?: string;
 }

@@ -243,4 +243,49 @@ export class EmailService {
       text: `Welcome to Ortus Finance, ${name}! Start investing today.`,
     });
   }
+
+  async sendWithdrawalEmail(
+    email: string,
+    name: string,
+    amount: number,
+    planName: string,
+    status: "APPROVED" | "REJECTED"
+  ): Promise<boolean> {
+    const subject = `Withdrawal Request ${status === "APPROVED" ? "Approved" : "Rejected"} - Ortus Finance`;
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: ${status === "APPROVED" ? "#10B981" : "#EF4444"}; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Withdrawal Request ${status === "APPROVED" ? "Processed Successfully" : "Rejected"}</h1>
+            </div>
+            <div class="content">
+              <p>Hello ${name},</p>
+              <p>Your withdrawal request for <strong>₹${amount.toLocaleString()}</strong> from the plan <strong>${planName}</strong> has been <strong>${status === "APPROVED" ? "APPROVED and processed" : "REJECTED by the administrator"}</strong>.</p>
+              \${status === "APPROVED" ? "<p>The funds should be credited to your registered bank account soon.</p>" : "<p>If you have any questions, please contact customer support.</p>"}
+            </div>
+            <div class="footer">
+              <p>&copy; 2025 Ortus Finance. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+    return this.sendEmail({
+      to: email,
+      subject,
+      html,
+      text: `Your withdrawal request of ₹\${amount} from \${planName} was \${status.toLowerCase()}.`,
+    });
+  }
 }

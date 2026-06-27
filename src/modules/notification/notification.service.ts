@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../common/prisma/prisma.service";
+import { FirebaseService } from "../../common/services/firebase.service";
 
 @Injectable()
 export class NotificationService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private firebaseService: FirebaseService
+  ) {}
 
   async getUserNotifications(
     userId: string,
@@ -145,6 +149,47 @@ export class NotificationService {
         data: data.data,
       },
     });
+
+    // Fetch user's registered devices and send push notification
+    try {
+      const devices = await this.prisma.device.findMany({
+        where: { userId: data.userId, isActive: true },
+        select: { deviceToken: true },
+      });
+
+      const tokens = devices.map((d) => d.deviceToken).filter(Boolean);
+
+      if (tokens.length > 0) {
+        const payloadData: Record<string, string> = {
+          type: String(data.type),
+          category: String(data.category),
+        };
+
+        if (data.data) {
+          payloadData.details = JSON.stringify(data.data);
+        }
+
+        const success = await this.firebaseService.sendPushNotification(
+          tokens,
+          data.title,
+          data.body,
+          payloadData
+        );
+
+        if (success) {
+          await this.prisma.notification.update({
+            where: { id: notification.id },
+            data: {
+              isPushSent: true,
+              pushSentAt: new Date(),
+            },
+          });
+        }
+      }
+    } catch (pushError) {
+      // Robust error handling to make sure failing pushes do not crash the app transactions
+      console.error("[NotificationService] Push notification dispatch failed:", pushError);
+    }
 
     return {
       success: true,

@@ -64,3 +64,12 @@ export class ProcessSIPDto {
   @IsNumber()
   amount: number;
 }
+
+export class WithdrawRequestDto {
+  @IsString()
+  investmentId: string;
+
+  @IsNumber()
+  @Min(1, { message: "Withdrawal amount must be at least 1" })
+  amount: number;
+}

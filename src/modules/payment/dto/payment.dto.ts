@@ -19,13 +19,20 @@ export class CreateOrderDto {
 
 export class VerifyPaymentDto {
   @IsString()
-  razorpayOrderId: string;
+  @IsOptional()
+  razorpayOrderId?: string;
 
   @IsString()
-  razorpayPaymentId: string;
+  @IsOptional()
+  razorpayPaymentId?: string;
 
   @IsString()
-  razorpaySignature: string;
+  @IsOptional()
+  razorpaySignature?: string;
+
+  @IsString()
+  @IsOptional()
+  orderId?: string;
 }
 
 export class WebhookDto {

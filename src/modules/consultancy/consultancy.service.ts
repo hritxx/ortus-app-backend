@@ -217,12 +217,12 @@ export class ConsultancyService {
     } = verifyPaymentDto;
 
     try {
-      // Skip signature verification in development mode for mock payments
+      // Check if we're in development mode
       const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
-      const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
 
-      if (isDevelopment && isMockPayment) {
-        this.logger.warn(`Skipping signature verification for mock payment in development: ${razorpayPaymentId}`);
+      // Skip signature verification in development for easier testing
+      if (isDevelopment) {
+        this.logger.warn(`Skipping signature verification in development mode for: ${razorpayPaymentId}`);
       } else {
         // Generate signature for verification
         const generatedSignature = crypto

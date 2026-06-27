@@ -11,6 +11,7 @@ import { NotificationModule } from "./modules/notification/notification.module";
 import { CoursesModule } from "./modules/courses/courses.module";
 import { ConsultancyModule } from "./modules/consultancy/consultancy.module";
 import { ChannelsModule } from "./modules/channels/channels.module";
+import { BseModule } from "./modules/bse/bse.module";
 import { AppController } from "./app.controller";
 
 @Module({
@@ -41,6 +42,7 @@ import { AppController } from "./app.controller";
     CoursesModule,
     ConsultancyModule,
     ChannelsModule,
+    BseModule,
   ],
   controllers: [AppController],
   providers: [],

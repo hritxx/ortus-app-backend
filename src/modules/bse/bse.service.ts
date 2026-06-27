@@ -3,6 +3,7 @@ import { PrismaService } from "../../common/prisma/prisma.service";
 import { BseRestClient } from "./bse-rest.client";
 import { BseSoapClient } from "./bse-soap.client";
 import { BseSessionService } from "./bse-session.service";
+import { mapOrderStatus } from "./bse-status.map";
 
 @Injectable()
 export class BseService {
@@ -61,6 +62,18 @@ export class BseService {
   // Placeholder ICCL redirect; becomes a real async BSE payment-gateway call (VERIFY: BSE PDF).
   private async getPaymentUrl(orderNumber: string, ucc: string, amount: number): Promise<string> {
     return `https://bsestarmfdemo.bseindia.com/pay?order=${orderNumber}&ucc=${ucc}&amt=${amount}`; // VERIFY: BSE PDF
+  }
+
+  async syncOrderStatus(orderId: string) {
+    const order = await this.prisma.mutualFundOrder.findUnique({ where: { id: orderId } });
+    if (!order?.bseOrderNumber) throw new BadRequestException("Order not found");
+    const token = await this.session.getToken("order");
+    const raw = await this.soap.getOrderStatus(token, order.bseOrderNumber);
+    const status = mapOrderStatus(raw);
+    return this.prisma.mutualFundOrder.update({
+      where: { id: orderId },
+      data: { status, folioNumber: raw.folio ?? order.folioNumber, units: raw.units ?? order.units },
+    });
   }
 
   private assertKycComplete(user: any): void {

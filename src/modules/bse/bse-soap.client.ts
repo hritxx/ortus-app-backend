@@ -66,4 +66,14 @@ export class BseSoapClient {
     if (!payload) throw new InternalServerErrorException("BSE returned success but no order number");
     return { orderNumber: payload };
   }
+
+  async getOrderStatus(token: string, orderNumber: string): Promise<{ orderStatus?: string; paymentStatus?: string; allotted?: boolean; folio?: string; units?: number }> {
+    const client = await this.getClient();
+    const [result] = await (client as any).orderStatusAsync({ EncryptedPassword: token, OrderNo: orderNumber, MemberId: this.cfg.memberCode }); // VERIFY
+    const raw = result?.orderStatusResult ?? "";
+    const { code, message, payload } = parsePipeResponse(raw);
+    if (code !== "100") mapBseError(code, message);
+    // VERIFY: parse payload fields. Returning a permissive shape the mapper understands.
+    return JSON.parse(payload || "{}");
+  }
 }

@@ -8,11 +8,12 @@ import { BseSessionService } from "./bse-session.service";
 import { BseRestClient } from "./bse-rest.client";
 import { BseService } from "./bse.service";
 import { BseController } from "./bse.controller";
+import { BseReconciliationProcessor } from "./jobs/bse-reconciliation.processor";
 
 @Module({
   imports: [ConfigModule, HttpModule, PrismaModule],
   controllers: [BseController],
-  providers: [BseConfig, BseSoapClient, BseSessionService, BseRestClient, BseService],
-  exports: [BseConfig, BseSoapClient, BseSessionService, BseService],
+  providers: [BseConfig, BseSoapClient, BseSessionService, BseRestClient, BseService, BseReconciliationProcessor],
+  exports: [BseConfig, BseSoapClient, BseSessionService, BseService, BseReconciliationProcessor],
 })
 export class BseModule {}

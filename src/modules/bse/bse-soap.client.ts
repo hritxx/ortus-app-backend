@@ -25,9 +25,15 @@ export class BseSoapClient {
   private async getClient(): Promise<soap.Client> {
     // Cache the PROMISE (not the resolved client) so concurrent callers share a
     // single in-flight createClientAsync and never double-init / leak a client.
+    // On rejection (e.g. WSDL unreachable at startup) reset the cache so the next
+    // call retries instead of permanently returning the same rejected promise.
     if (!this.clientPromise) {
       this.cfg.assertConfigured();
-      this.clientPromise = soap.createClientAsync(this.cfg.soapOrderUrl + "?wsdl"); // VERIFY URL/WSDL
+      this.clientPromise = soap.createClientAsync(this.cfg.soapOrderUrl + "?wsdl") // VERIFY URL/WSDL
+        .catch((err) => {
+          this.clientPromise = undefined;
+          throw err;
+        });
     }
     return this.clientPromise;
   }

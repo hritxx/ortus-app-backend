@@ -5,10 +5,12 @@ import { PrismaModule } from "../../common/prisma/prisma.module";
 import { BseConfig } from "./bse.config";
 import { BseSoapClient } from "./bse-soap.client";
 import { BseSessionService } from "./bse-session.service";
+import { BseRestClient } from "./bse-rest.client";
+import { BseService } from "./bse.service";
 
 @Module({
   imports: [ConfigModule, HttpModule, PrismaModule],
-  providers: [BseConfig, BseSoapClient, BseSessionService],
-  exports: [BseConfig, BseSoapClient, BseSessionService],
+  providers: [BseConfig, BseSoapClient, BseSessionService, BseRestClient, BseService],
+  exports: [BseConfig, BseSoapClient, BseSessionService, BseService],
 })
 export class BseModule {}

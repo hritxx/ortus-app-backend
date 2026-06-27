@@ -32,8 +32,8 @@ export class BseController {
   }
 
   @Get("order/:id/status")
-  status(@Param("id") id: string) {
-    return this.bse.syncOrderStatus(id);
+  status(@Param("id") id: string, @Request() req) {
+    return this.bse.syncOrderStatus(id, req.user.id);
   }
 
   @Get("funds")

@@ -24,4 +24,9 @@ describe("BseController", () => {
     expect(svc.purchase).toHaveBeenCalledWith("u1", dto);
     expect(res.paymentUrl).toBe("http://pay");
   });
+  it("forwards the order id AND the authenticated user id to syncOrderStatus", async () => {
+    const { ctrl, svc } = make();
+    await ctrl.status("someId", req);
+    expect(svc.syncOrderStatus).toHaveBeenCalledWith("someId", "u1");
+  });
 });

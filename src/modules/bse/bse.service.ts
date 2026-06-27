@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from "@nestjs/common";
+import { Injectable, BadRequestException, ForbiddenException, Logger } from "@nestjs/common";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { BseRestClient } from "./bse-rest.client";
 import { BseSoapClient } from "./bse-soap.client";
@@ -64,9 +64,10 @@ export class BseService {
     return `https://bsestarmfdemo.bseindia.com/pay?order=${orderNumber}&ucc=${ucc}&amt=${amount}`; // VERIFY: BSE PDF
   }
 
-  async syncOrderStatus(orderId: string) {
+  async syncOrderStatus(orderId: string, userId?: string) {
     const order = await this.prisma.mutualFundOrder.findUnique({ where: { id: orderId } });
     if (!order?.bseOrderNumber) throw new BadRequestException("Order not found");
+    if (userId && order.userId !== userId) throw new ForbiddenException();
     const token = await this.session.getToken("order");
     const raw = await this.soap.getOrderStatus(token, order.bseOrderNumber);
     const status = mapOrderStatus(raw);

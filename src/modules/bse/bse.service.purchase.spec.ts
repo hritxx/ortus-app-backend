@@ -9,7 +9,7 @@ function make(user = { id: "u1", bseUcc: "UCC1", fatcaRegistered: true }) {
   const soap = { placeOrder: jest.fn().mockResolvedValue({ orderNumber: "BSE999" }) } as any;
   const session = { getToken: jest.fn().mockResolvedValue("TOK") } as any;
   const rest = {} as any;
-  const svc = new BseService(prisma, rest, soap, session);
+  const svc = new BseService(prisma, rest, soap, session, {} as any);
   return { svc, prisma, soap, session };
 }
 

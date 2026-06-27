@@ -10,7 +10,8 @@ function make(order: any, bseStatus: any) {
   } as any;
   const soap = { getOrderStatus: jest.fn().mockResolvedValue(bseStatus) } as any;
   const session = { getToken: jest.fn().mockResolvedValue("TOK") } as any;
-  const svc = new BseService(prisma, {} as any, soap, session);
+  const notify = { pushToUser: jest.fn().mockResolvedValue(true) } as any;
+  const svc = new BseService(prisma, {} as any, soap, session, notify);
   return { svc, prisma, soap, session };
 }
 

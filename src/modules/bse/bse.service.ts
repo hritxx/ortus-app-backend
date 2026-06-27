@@ -1,9 +1,10 @@
-import { Injectable, BadRequestException, ForbiddenException, Logger } from "@nestjs/common";
+import { Injectable, BadRequestException, ForbiddenException, Logger, Inject } from "@nestjs/common";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { BseRestClient } from "./bse-rest.client";
 import { BseSoapClient } from "./bse-soap.client";
 import { BseSessionService } from "./bse-session.service";
 import { mapOrderStatus } from "./bse-status.map";
+import { NOTIFICATION_PORT, NotificationPort } from "./bse-notification.port";
 
 @Injectable()
 export class BseService {
@@ -13,6 +14,7 @@ export class BseService {
     private readonly rest: BseRestClient,
     private readonly soap: BseSoapClient,
     private readonly session: BseSessionService,
+    @Inject(NOTIFICATION_PORT) private readonly notify: NotificationPort,
   ) {}
 
   async onboard(userId: string): Promise<{ ucc: string; fatcaRegistered: boolean }> {
@@ -71,10 +73,27 @@ export class BseService {
     const token = await this.session.getToken("order");
     const raw = await this.soap.getOrderStatus(token, order.bseOrderNumber);
     const status = mapOrderStatus(raw);
-    return this.prisma.mutualFundOrder.update({
+    const updated = await this.prisma.mutualFundOrder.update({
       where: { id: orderId },
       data: { status, folioNumber: raw.folio ?? order.folioNumber, units: raw.units ?? order.units },
     });
+
+    // Notify the investor on a terminal transition. Failures here must NOT fail
+    // the sync — the status is already persisted above.
+    if (status !== order.status && (status === "ALLOTTED" || status === "REJECTED")) {
+      const title = status === "ALLOTTED" ? "Units allotted ✅" : "Order rejected";
+      const body =
+        status === "ALLOTTED"
+          ? `${order.schemeName} units are now in your portfolio.`
+          : `${order.schemeName} could not be processed.`;
+      try {
+        await this.notify.pushToUser(order.userId, { title, body, data: { orderId: order.id } });
+      } catch (e) {
+        this.logger.warn(`order ${order.id} status push failed: ${(e as Error).message}`);
+      }
+    }
+
+    return updated;
   }
 
   async listFunds(search?: string, category?: string) {

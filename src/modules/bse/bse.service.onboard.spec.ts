@@ -8,7 +8,7 @@ function make(user: any) {
     registerUcc: jest.fn().mockResolvedValue({ ucc: "UCC1" }),
     registerFatca: jest.fn().mockResolvedValue(undefined),
   } as any;
-  const svc = new BseService(prisma, rest, {} as any, {} as any);
+  const svc = new BseService(prisma, rest, {} as any, {} as any, {} as any);
   return { svc, prisma, rest };
 }
 

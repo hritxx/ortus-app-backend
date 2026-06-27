@@ -76,6 +76,17 @@ export class BseService {
     });
   }
 
+  async listFunds(search?: string, category?: string) {
+    return this.prisma.mfScheme.findMany({
+      where: {
+        ...(category ? { category } : {}),
+        ...(search ? { schemeName: { contains: search, mode: "insensitive" } } : {}),
+      },
+      take: 50,
+      orderBy: { schemeName: "asc" },
+    });
+  }
+
   private assertKycComplete(user: any): void {
     const missing = ["panNumber", "bankAccount", "ifscCode"].filter((f) => !user[f]);
     if (missing.length) throw new BadRequestException(`Complete your KYC first (missing: ${missing.join(", ")})`);

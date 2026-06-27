@@ -7,9 +7,11 @@ import { BseSoapClient } from "./bse-soap.client";
 import { BseSessionService } from "./bse-session.service";
 import { BseRestClient } from "./bse-rest.client";
 import { BseService } from "./bse.service";
+import { BseController } from "./bse.controller";
 
 @Module({
   imports: [ConfigModule, HttpModule, PrismaModule],
+  controllers: [BseController],
   providers: [BseConfig, BseSoapClient, BseSessionService, BseRestClient, BseService],
   exports: [BseConfig, BseSoapClient, BseSessionService, BseService],
 })

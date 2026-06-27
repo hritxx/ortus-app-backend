@@ -5,6 +5,7 @@ import { BseSoapClient } from "./bse-soap.client";
 import { BseSessionService } from "./bse-session.service";
 import { mapOrderStatus } from "./bse-status.map";
 import { NOTIFICATION_PORT, NotificationPort } from "./bse-notification.port";
+import { UCC_DEFAULTS, FATCA_DEFAULTS } from "./bse.fields";
 
 @Injectable()
 export class BseService {
@@ -29,13 +30,15 @@ export class BseService {
       const clientCode = userId.slice(-10).toUpperCase();           // VERIFY UCC format rules vs PDF
       const res = await this.rest.registerUcc({
         clientCode, firstName: user.name ?? "Investor", pan: user.panNumber!,
-        holdingMode: "SI", taxStatus: "01", bankAccount: user.bankAccount!, ifsc: user.ifscCode!,
-        accountType: "SB", email: user.email, mobile: user.phone ?? "", allotmentMode: "PHYSICAL",
+        holdingMode: UCC_DEFAULTS.holdingMode, taxStatus: UCC_DEFAULTS.taxStatus,
+        bankAccount: user.bankAccount!, ifsc: user.ifscCode!,
+        accountType: UCC_DEFAULTS.accountType, email: user.email, mobile: user.phone ?? "",
+        allotmentMode: UCC_DEFAULTS.allotmentMode,
       });
       ucc = res.ucc;
     }
     if (!fatca) {
-      await this.rest.registerFatca({ clientCode: ucc, pan: user.panNumber!, birthCountry: "IN", taxResidency: "IN" });
+      await this.rest.registerFatca({ clientCode: ucc, pan: user.panNumber!, birthCountry: FATCA_DEFAULTS.birthCountry, taxResidency: FATCA_DEFAULTS.taxResidency });
       fatca = true;
     }
     await this.prisma.user.update({ where: { id: userId }, data: { bseUcc: ucc, fatcaRegistered: fatca } });
@@ -49,7 +52,8 @@ export class BseService {
 
     const token = await this.session.getToken("order");
     const { orderNumber } = await this.soap.placeOrder({
-      token, ucc: user.bseUcc, schemeCode: dto.schemeCode, amount: dto.amount, buySell: "P", orderType: dto.type,
+      token, ucc: user.bseUcc, schemeCode: dto.schemeCode, amount: dto.amount, buySell: "P", // VERIFY: BSE PDF (P = Purchase)
+      orderType: dto.type,
     });
 
     const paymentUrl = await this.getPaymentUrl(orderNumber, user.bseUcc, dto.amount);

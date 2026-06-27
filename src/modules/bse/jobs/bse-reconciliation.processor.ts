@@ -10,10 +10,11 @@
  * This is an integration step requiring Redis + the BSE market calendar.
  */
 import { Injectable, Logger } from "@nestjs/common";
+import { MfOrderStatus } from "@prisma/client";
 import { PrismaService } from "../../../common/prisma/prisma.service";
 import { BseService } from "../bse.service";
 
-const TERMINAL = ["ALLOTTED", "REJECTED", "CANCELLED"];
+const TERMINAL = [MfOrderStatus.ALLOTTED, MfOrderStatus.REJECTED, MfOrderStatus.CANCELLED];
 
 @Injectable()
 export class BseReconciliationProcessor {
@@ -26,7 +27,7 @@ export class BseReconciliationProcessor {
 
   async reconcileOpenOrders(now: Date): Promise<{ checked: number; autoCancelled: number }> {
     const open = await this.prisma.mutualFundOrder.findMany({
-      where: { status: { notIn: TERMINAL as any } },
+      where: { status: { notIn: TERMINAL } },
     });
 
     let autoCancelled = 0;

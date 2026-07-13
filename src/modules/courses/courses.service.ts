@@ -12,7 +12,7 @@ import { CreateCourseDto, UpdateCourseDto, VerifyPaymentDto, CreateWebinarDto } 
 import { CourseType, EnrollmentStatus } from "@prisma/client";
 import { NotificationService } from "../notification/notification.service";
 import Razorpay from "razorpay";
-import * as crypto from "crypto";
+import { CashfreeGateway } from "../payment/gateways/cashfree.gateway";
 
 @Injectable()
 export class CoursesService {
@@ -22,7 +22,8 @@ export class CoursesService {
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private cashfree: CashfreeGateway
   ) {
     const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
     const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
@@ -263,56 +264,18 @@ export class CoursesService {
         throw new ConflictException("You are already enrolled in this course");
       }
 
-      // If there's a pending enrollment, use that
+      // If there's a pending enrollment, reuse it and issue a fresh checkout link.
       if (existingEnrollment.status === EnrollmentStatus.PENDING) {
-        // Check Razorpay is configured
-        this.checkRazorpayConfig();
-
-        // Create new Razorpay order for existing pending enrollment
         try {
-          const orderData = {
-            amount: Math.round(course.price * 100), // Convert to paise
-            currency: course.currency || "INR",
-            receipt: `course_${courseId.slice(-8)}_${Date.now().toString().slice(-6)}`,
-            notes: {
-              courseId,
-              userId,
-              enrollmentId: existingEnrollment.id,
-              type: "course_enrollment",
-            },
-          };
-
-          this.logger.log(`Creating Razorpay order with data: ${JSON.stringify(orderData)}`);
-
-          const order = await this.razorpay.orders.create(orderData);
-
-          this.logger.log(
-            `Razorpay order created: ${order.id} for enrollment: ${existingEnrollment.id}`
-          );
-
-          return {
-            success: true,
-            data: {
-              orderId: order.id,
-              amount: Number(order.amount) / 100,
-              currency: order.currency,
-              courseId,
-              enrollmentId: existingEnrollment.id,
-              razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
-            },
-          };
+          return await this.createCourseCheckout(userId, course, existingEnrollment.id);
         } catch (error: any) {
-          this.logger.error(`Error creating Razorpay order: ${error?.message || error}`);
-          this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error || {}))}`);
+          this.logger.error(`Error creating course checkout: ${error?.message || error}`);
           throw new InternalServerErrorException(
             `Failed to create payment order: ${error?.message || 'Unknown error'}`
           );
         }
       }
     }
-
-    // Check Razorpay is configured
-    this.checkRazorpayConfig();
 
     // Create new enrollment with PENDING status
     const enrollment = await this.prisma.courseEnrollment.create({
@@ -324,57 +287,59 @@ export class CoursesService {
       },
     });
 
-    // Create Razorpay order
+    // Create the Cashfree hosted-checkout link for this enrollment.
     try {
-      const orderData = {
-        amount: Math.round(course.price * 100), // Convert to paise
-        currency: course.currency || "INR",
-        receipt: `course_${courseId.slice(-8)}_${Date.now().toString().slice(-6)}`,
-        notes: {
-          courseId,
-          userId,
-          enrollmentId: enrollment.id,
-          type: "course_enrollment",
-        },
-      };
-
-      this.logger.log(`Creating Razorpay order for new enrollment with data: ${JSON.stringify(orderData)}`);
-
-      const order = await this.razorpay.orders.create(orderData);
-
-      this.logger.log(
-        `Razorpay order created: ${order.id} for enrollment: ${enrollment.id}`
-      );
-
-      return {
-        success: true,
-        data: {
-          orderId: order.id,
-          amount: Number(order.amount) / 100,
-          currency: order.currency,
-          courseId,
-          enrollmentId: enrollment.id,
-          razorpayKeyId: this.configService.get<string>("RAZORPAY_KEY_ID"),
-        },
-      };
+      return await this.createCourseCheckout(userId, course, enrollment.id);
     } catch (error: any) {
-      // Clean up enrollment if order creation fails
+      // Clean up enrollment if checkout creation fails
       await this.prisma.courseEnrollment.delete({
         where: { id: enrollment.id },
       });
 
-      this.logger.error(`Error creating Razorpay order: ${error?.message || error}`);
-      this.logger.error(`Error details: ${JSON.stringify(error, Object.getOwnPropertyNames(error || {}))}`);
+      this.logger.error(`Error creating course checkout: ${error?.message || error}`);
       throw new InternalServerErrorException(`Failed to create payment order: ${error?.message || 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Creates a Cashfree hosted-checkout (Payment Link) for a course enrollment and
+   * returns the data the app needs to open it and verify afterwards.
+   */
+  private async createCourseCheckout(
+    userId: string,
+    course: { id: string; price: number; currency?: string | null },
+    enrollmentId: string
+  ) {
+    const order = await this.cashfree.createOrder(userId, {
+      amount: course.price,
+      currency: course.currency || "INR",
+      receipt: `course_${course.id.slice(-8)}_${Date.now().toString().slice(-6)}`,
+    } as any);
+
+    this.logger.log(
+      `Cashfree course checkout created (${order.orderId}) for enrollment ${enrollmentId}`
+    );
+
+    return {
+      success: true,
+      data: {
+        orderId: order.orderId,
+        checkoutUrl: order.checkoutUrl,
+        amount: order.amount,
+        currency: order.currency,
+        courseId: course.id,
+        enrollmentId,
+        provider: "CASHFREE",
+      },
+    };
   }
 
   /**
    * Verify payment and activate enrollment
    */
   async verifyPayment(userId: string, courseId: string, dto: VerifyPaymentDto) {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, enrollmentId } =
-      dto;
+    const linkId = dto.orderId || dto.razorpayOrderId;
+    const { enrollmentId } = dto;
 
     // Verify the enrollment belongs to the user
     const enrollment = await this.prisma.courseEnrollment.findFirst({
@@ -396,52 +361,18 @@ export class CoursesService {
       throw new BadRequestException("Enrollment is already active");
     }
 
-    // Check if we're in development mode
-    const isDevelopment = this.configService.get<string>("NODE_ENV") === "development";
-
-    // Verify Razorpay signature (skip in development for easier testing)
-    try {
-      if (isDevelopment) {
-        this.logger.warn(`Skipping signature verification in development mode for: ${razorpayPaymentId}`);
-      } else {
-        const generatedSignature = crypto
-          .createHmac(
-            "sha256",
-            this.configService.get<string>("RAZORPAY_KEY_SECRET")
-          )
-          .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-          .digest("hex");
-
-        if (generatedSignature !== razorpaySignature) {
-          this.logger.warn(
-            `Payment verification failed for enrollment: ${enrollmentId}`
-          );
-          throw new BadRequestException("Invalid payment signature");
-        }
-      }
-    } catch (error: any) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      this.logger.error("Payment verification error:", error);
-      throw new InternalServerErrorException("Payment verification failed");
+    if (!linkId) {
+      throw new BadRequestException("Missing payment reference");
     }
 
-    // Check if this is a mock payment (for skipping Razorpay API calls)
-    const isMockPayment = razorpayPaymentId.startsWith("pay_") && /^pay_\d+$/.test(razorpayPaymentId);
-
-    let paymentMethod = "mock";
-
-    if (isDevelopment && isMockPayment) {
-      this.logger.warn(`Skipping Razorpay fetch for mock payment in development: ${razorpayPaymentId}`);
-    } else {
-      // Fetch payment details from Razorpay to confirm
-      const payment = await this.razorpay.payments.fetch(razorpayPaymentId);
-
-      if (payment.status !== "captured") {
-        throw new BadRequestException("Payment not captured");
-      }
-      paymentMethod = payment.method;
+    // Confirm with Cashfree that the hosted-checkout link was actually PAID.
+    const result = await this.cashfree.verifyPayment(userId, { orderId: linkId } as any);
+    if (!result.verified) {
+      throw new BadRequestException("Payment not completed. Please try again.");
+    }
+    // Guard against a mismatched link being passed: the paid amount must match the course price.
+    if (Math.round(Number(result.amount)) !== Math.round(Number(enrollment.amountPaid))) {
+      throw new BadRequestException("Payment amount mismatch");
     }
 
     // Create a transaction record
@@ -451,17 +382,16 @@ export class CoursesService {
         type: "INVESTMENT", // Using INVESTMENT as the closest type
         amount: enrollment.amountPaid,
         status: "COMPLETED",
-        paymentMethod: paymentMethod,
-        paymentReference: razorpayPaymentId,
-        razorpayOrderId,
-        razorpayPaymentId,
-        razorpaySignature,
+        paymentMethod: "cashfree",
+        paymentReference: linkId,
         description: `Course enrollment: ${enrollment.course.title}`,
         processedAt: new Date(),
         metadata: {
           type: "course_enrollment",
           courseId,
           enrollmentId,
+          provider: "CASHFREE",
+          linkId,
         },
       },
     });

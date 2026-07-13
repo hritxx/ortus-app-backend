@@ -3,7 +3,8 @@ import { CreateOrderDto, VerifyPaymentDto, RefundPaymentDto } from './dto/paymen
 export interface CreateOrderResult {
   success: boolean;
   orderId: string;
-  paymentSessionId?: string; // only for Cashfree
+  paymentSessionId?: string; // only for Cashfree (native/JS SDK checkout)
+  checkoutUrl?: string; // browser-openable hosted checkout URL (Cashfree Payment Link)
   amount: number;
   currency: string;
   receipt?: string;

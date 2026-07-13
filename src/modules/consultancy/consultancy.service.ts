@@ -537,7 +537,21 @@ export class ConsultancyService {
       throw new BadRequestException("This time slot is already booked");
     }
 
-    // Check if user has too many pending sessions
+    // Abandoned unpaid bookings (e.g. a payment that was started but never completed)
+    // must not lock the user out forever. Auto-cancel any session that has sat
+    // unpaid for over 30 minutes before counting it toward the pending limit.
+    const staleCutoff = new Date(Date.now() - 30 * 60 * 1000);
+    await this.prisma.oneOnOneSession.updateMany({
+      where: {
+        userId,
+        status: "SCHEDULED",
+        transactionId: null,
+        createdAt: { lt: staleCutoff },
+      },
+      data: { status: "CANCELLED" },
+    });
+
+    // Check if the user still has too many recent unpaid pending sessions
     const pendingSessions = await this.prisma.oneOnOneSession.count({
       where: {
         userId,
@@ -549,7 +563,7 @@ export class ConsultancyService {
 
     if (pendingSessions >= 3) {
       throw new BadRequestException(
-        "You have too many pending session bookings. Please complete payment for existing bookings first."
+        "You have a few unpaid session bookings. Please complete one, or wait a few minutes for them to expire, before booking again."
       );
     }
 

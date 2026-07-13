@@ -324,13 +324,10 @@ export class InvestmentService {
       cash: totalAllocatedValue > 0 ? Number(((totalCashValue / totalAllocatedValue) * 100).toFixed(2)) : 0,
     };
 
-    // If active investments exist but allocations are unconfigured (all zero), return a balanced fallback
-    if (totalAllocatedValue === 0 && updatedInvestments.length > 0) {
-      assetAllocation.equity = 40;
-      assetAllocation.debt = 30;
-      assetAllocation.gold = 15;
-      assetAllocation.cash = 15;
-    }
+    // No hardcoded fallback: assetAllocation reflects the real per-plan allocations
+    // stored in the DB (equity/debt/gold/cashAllocation on each InvestmentPlan), weighted
+    // by current value. If a plan has no allocation configured, its weight is zero —
+    // configure that plan's allocations to populate this breakdown.
 
     // Get user's token balance
     const user = await this.prisma.user.findUnique({

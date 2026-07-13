@@ -1,14 +1,23 @@
-import { IsString } from "class-validator";
+import { IsString, IsOptional } from "class-validator";
 
 export class VerifyPaymentDto {
+  // Cashfree payment-link id returned by /courses/:id/enroll.
   @IsString()
-  razorpayOrderId: string;
+  @IsOptional()
+  orderId?: string;
+
+  // Legacy Razorpay fields (kept optional for backward compatibility).
+  @IsString()
+  @IsOptional()
+  razorpayOrderId?: string;
 
   @IsString()
-  razorpayPaymentId: string;
+  @IsOptional()
+  razorpayPaymentId?: string;
 
   @IsString()
-  razorpaySignature: string;
+  @IsOptional()
+  razorpaySignature?: string;
 
   @IsString()
   enrollmentId: string;

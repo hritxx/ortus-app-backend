@@ -40,31 +40,48 @@ export class CashfreeGateway implements PaymentGateway {
         throw new BadRequestException("User not found");
       }
 
-      const customerId = user.email
-        ? user.email.replace(/[^a-zA-Z0-9]/g, "").slice(0, 50)
-        : `cust_${userId.slice(-10)}`;
-
       const customerName = user.name || "Investor";
       const customerEmail = user.email;
       const customerPhone = (user.phone || "9999999999").replace(/\D/g, "").slice(-10);
 
-      const orderId = receipt || `ord_${Date.now()}`;
+      // A Cashfree Payment Link returns a publicly-reachable hosted-checkout URL that
+      // opens directly in a mobile browser (expo-web-browser) — unlike a payment
+      // session, which requires the Cashfree JS/native SDK to render. This is what
+      // fixes the previous "endpoint or method is not valid" error from the app
+      // hand-building an invalid `/pg/view/checkout?session_id=` URL.
+      const linkId = (receipt || `link_${Date.now()}_${userId.slice(-6)}`)
+        .replace(/[^a-zA-Z0-9_-]/g, "")
+        .slice(0, 50);
 
-      const payload = {
-        order_amount: amount,
-        order_currency: currency || "INR",
-        order_id: orderId,
+      // Cashfree only accepts http(s) return URLs — a custom app scheme like
+      // `ortus-finance://` is rejected with `link_meta.return_url_invalid`. The app
+      // verifies payment after the in-app browser closes, so return_url is optional;
+      // only include it when a valid https URL is configured (e.g. a deployed
+      // redirect page or a universal link).
+      const returnUrl = this.configService.get<string>("CASHFREE_RETURN_URL");
+
+      const payload: Record<string, any> = {
+        link_id: linkId,
+        link_amount: amount,
+        link_currency: currency || "INR",
+        link_purpose: "Ortus Finance payment",
         customer_details: {
-          customer_id: customerId,
+          customer_phone: customerPhone,
           customer_name: customerName,
           customer_email: customerEmail,
-          customer_phone: customerPhone,
         },
+        link_partial_payments: false,
+        link_notify: { send_sms: false, send_email: false },
+        link_auto_reminders: false,
       };
 
-      this.logger.log(`Creating Cashfree order ${orderId} for user ${userId}`);
+      if (returnUrl && /^https?:\/\//.test(returnUrl)) {
+        payload.link_meta = { return_url: `${returnUrl}?link_id=${linkId}` };
+      }
 
-      const response = await fetch(`${this.baseUrl}/orders`, {
+      this.logger.log(`Creating Cashfree payment link ${linkId} for user ${userId}`);
+
+      const response = await fetch(`${this.baseUrl}/links`, {
         method: "POST",
         headers: {
           "x-client-id": this.appId,
@@ -78,38 +95,38 @@ export class CashfreeGateway implements PaymentGateway {
 
       if (!response.ok) {
         const errorText = await response.text();
-        this.logger.error(`Cashfree Create Order API Error: ${errorText}`);
-        throw new Error(`Cashfree order creation failed with status ${response.status}`);
+        this.logger.error(`Cashfree Create Link API Error: ${errorText}`);
+        throw new Error(`Cashfree link creation failed with status ${response.status}`);
       }
 
       const data = await response.json();
 
       return {
         success: true,
-        orderId: data.order_id,
-        paymentSessionId: data.payment_session_id,
-        amount: data.order_amount,
-        currency: data.order_currency,
-        receipt: data.order_id,
+        orderId: data.link_id,
+        checkoutUrl: data.link_url,
+        amount: data.link_amount,
+        currency: data.link_currency,
+        receipt: data.link_id,
         publicKey: this.appId,
         provider: "CASHFREE",
       };
     } catch (error: any) {
-      this.logger.error(`Error creating Cashfree order: ${error?.message || error}`);
+      this.logger.error(`Error creating Cashfree payment link: ${error?.message || error}`);
       throw new InternalServerErrorException(`Failed to create Cashfree order: ${error?.message || "Unknown error"}`);
     }
   }
 
   async verifyPayment(userId: string, verifyPaymentDto: VerifyPaymentDto): Promise<VerifyPaymentResult> {
-    const orderId = verifyPaymentDto.orderId || verifyPaymentDto.razorpayOrderId;
-    if (!orderId) {
-      throw new BadRequestException("Missing orderId for Cashfree verification");
+    const linkId = verifyPaymentDto.orderId || verifyPaymentDto.razorpayOrderId;
+    if (!linkId) {
+      throw new BadRequestException("Missing orderId/linkId for Cashfree verification");
     }
 
     try {
-      this.logger.log(`Verifying Cashfree order status: ${orderId}`);
+      this.logger.log(`Verifying Cashfree payment link status: ${linkId}`);
 
-      const response = await fetch(`${this.baseUrl}/orders/${orderId}`, {
+      const response = await fetch(`${this.baseUrl}/links/${linkId}`, {
         method: "GET",
         headers: {
           "x-client-id": this.appId,
@@ -120,25 +137,26 @@ export class CashfreeGateway implements PaymentGateway {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch Cashfree order info: ${response.statusText}`);
+        throw new Error(`Failed to fetch Cashfree link info: ${response.statusText}`);
       }
 
       const data = await response.json();
 
-      const verified = data.order_status === "PAID";
+      // link_status: ACTIVE | PAID | PARTIALLY_PAID | EXPIRED | CANCELLED
+      const verified = data.link_status === "PAID";
 
       return {
         success: true,
         verified,
-        paymentId: data.order_id,
-        orderId: data.order_id,
-        amount: data.order_amount,
-        currency: data.order_currency,
-        status: data.order_status,
+        paymentId: data.link_id,
+        orderId: data.link_id,
+        amount: data.link_amount,
+        currency: data.link_currency,
+        status: data.link_status,
         provider: "CASHFREE",
       };
     } catch (error: any) {
-      this.logger.error(`Cashfree payment verification error for order ${orderId}:`, error);
+      this.logger.error(`Cashfree payment verification error for link ${linkId}:`, error);
       throw new InternalServerErrorException(`Payment verification failed: ${error.message}`);
     }
   }

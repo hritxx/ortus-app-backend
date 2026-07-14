@@ -17,7 +17,7 @@ import { CashfreeGateway } from "../payment/gateways/cashfree.gateway";
 @Injectable()
 export class CoursesService {
   private readonly logger = new Logger(CoursesService.name);
-  private razorpay: Razorpay;
+  private razorpay: Razorpay | null = null;
 
   constructor(
     private prisma: PrismaService,
@@ -28,17 +28,15 @@ export class CoursesService {
     const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
     const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
 
-    this.logger.log(`Initializing Razorpay with key_id: ${keyId ? keyId.substring(0, 10) + '...' : 'MISSING'}`);
-    this.logger.log(`Razorpay key_secret: ${keySecret ? 'SET (' + keySecret.length + ' chars)' : 'MISSING'}`);
-
-    if (!keyId || !keySecret) {
-      this.logger.error('Razorpay credentials missing! Check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET env vars');
+    if (keyId && keySecret) {
+      this.logger.log(`Initializing Razorpay with key_id: ${keyId.substring(0, 10)}...`);
+      this.razorpay = new Razorpay({
+        key_id: keyId,
+        key_secret: keySecret,
+      });
+    } else {
+      this.logger.warn('Razorpay credentials not set — Razorpay-backed course payments disabled');
     }
-
-    this.razorpay = new Razorpay({
-      key_id: keyId || '',
-      key_secret: keySecret || '',
-    });
   }
 
   private checkRazorpayConfig() {

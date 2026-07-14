@@ -8,18 +8,28 @@ import * as crypto from "crypto";
 @Injectable()
 export class RazorpayGateway implements PaymentGateway {
   private readonly logger = new Logger(RazorpayGateway.name);
-  private razorpay: Razorpay;
+  private razorpay: Razorpay | null = null;
 
   constructor(private configService: ConfigService) {
     const keyId = this.configService.get<string>("RAZORPAY_KEY_ID");
     const keySecret = this.configService.get<string>("RAZORPAY_KEY_SECRET");
 
-    this.logger.log(`Initializing Razorpay with key_id: ${keyId ? keyId.substring(0, 10) + '...' : 'MISSING'}`);
+    if (keyId && keySecret) {
+      this.logger.log(`Initializing Razorpay with key_id: ${keyId.substring(0, 10)}...`);
+      this.razorpay = new Razorpay({
+        key_id: keyId,
+        key_secret: keySecret,
+      });
+    } else {
+      this.logger.warn("Razorpay credentials not set — Razorpay gateway disabled until RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET are configured");
+    }
+  }
 
-    this.razorpay = new Razorpay({
-      key_id: keyId,
-      key_secret: keySecret,
-    });
+  private getClient(): Razorpay {
+    if (!this.razorpay) {
+      throw new InternalServerErrorException("Razorpay gateway is not configured");
+    }
+    return this.razorpay;
   }
 
   async createOrder(userId: string, createOrderDto: CreateOrderDto): Promise<CreateOrderResult> {
@@ -50,7 +60,7 @@ export class RazorpayGateway implements PaymentGateway {
       };
 
       this.logger.log(`Creating Razorpay order: ${JSON.stringify(orderData)}`);
-      const order = await this.razorpay.orders.create(orderData);
+      const order = await this.getClient().orders.create(orderData);
 
       return {
         success: true,
@@ -91,7 +101,7 @@ export class RazorpayGateway implements PaymentGateway {
         }
       }
 
-      const payment = await this.razorpay.payments.fetch(razorpayPaymentId);
+      const payment = await this.getClient().payments.fetch(razorpayPaymentId);
 
       return {
         success: true,
@@ -117,13 +127,13 @@ export class RazorpayGateway implements PaymentGateway {
   async refundPayment(userId: string, refundPaymentDto: RefundPaymentDto): Promise<RefundResult> {
     try {
       const { paymentId, amount, reason } = refundPaymentDto;
-      const payment = await this.razorpay.payments.fetch(paymentId);
+      const payment = await this.getClient().payments.fetch(paymentId);
 
       if (!payment) {
         throw new BadRequestException("Payment not found");
       }
 
-      const refund = await this.razorpay.payments.refund(paymentId, {
+      const refund = await this.getClient().payments.refund(paymentId, {
         amount: amount ? amount * 100 : undefined,
         notes: {
           reason: reason || "Customer requested refund",
@@ -144,7 +154,7 @@ export class RazorpayGateway implements PaymentGateway {
 
   async getPaymentDetails(paymentId: string): Promise<any> {
     try {
-      const payment = await this.razorpay.payments.fetch(paymentId);
+      const payment = await this.getClient().payments.fetch(paymentId);
       return {
         success: true,
         payment: {

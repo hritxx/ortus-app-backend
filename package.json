@@ -44,6 +44,7 @@
     "@willsoto/nestjs-prometheus": "^6.0.0",
     "axios": "^1.6.5",
     "bcrypt": "^5.1.1",
+    "bse-starmfv2-sdk": "file:vendor-bse-starmfv2-sdk-1.0.0.tgz",
     "bull": "^4.12.2",
     "bullmq": "^5.0.0",
     "class-transformer": "^0.5.1",

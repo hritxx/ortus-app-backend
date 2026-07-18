@@ -12,9 +12,14 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { MfOrderStatus } from "@prisma/client";
 import { PrismaService } from "../../../common/prisma/prisma.service";
-import { BseService } from "../bse.service";
+import { BseOrderService } from "../services/bse-order.service";
 
-const TERMINAL = [MfOrderStatus.ALLOTTED, MfOrderStatus.REJECTED, MfOrderStatus.CANCELLED];
+const TERMINAL = [
+  MfOrderStatus.ALLOTTED,
+  MfOrderStatus.REDEEMED,
+  MfOrderStatus.REJECTED,
+  MfOrderStatus.CANCELLED,
+];
 
 @Injectable()
 export class BseReconciliationProcessor {
@@ -22,7 +27,7 @@ export class BseReconciliationProcessor {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly bse: BseService,
+    private readonly orders: BseOrderService,
   ) {}
 
   async reconcileOpenOrders(now: Date): Promise<{ checked: number; autoCancelled: number }> {
@@ -45,9 +50,10 @@ export class BseReconciliationProcessor {
         continue;
       }
 
+      // Sells never wait on payment, so the T+1 cutoff only applies to BUY orders (handled above).
       try {
         // Trusted system caller — no userId, ownership check intentionally skipped.
-        await this.bse.syncOrderStatus(order.id);
+        await this.orders.syncOrderStatus(order.id);
       } catch (e) {
         this.logger.warn(`reconcile ${order.id} failed: ${(e as Error).message}`);
       }

@@ -2,14 +2,17 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { HttpModule } from "@nestjs/axios";
 import { PrismaModule } from "../../common/prisma/prisma.module";
+import { NotificationModule } from "../notification/notification.module";
 import { BseConfig } from "./bse.config";
-import { BseSoapClient } from "./bse-soap.client";
-import { BseSessionService } from "./bse-session.service";
-import { BseRestClient } from "./bse-rest.client";
-import { BseService } from "./bse.service";
+import { BseSdkClient } from "./sdk/bse-sdk.client";
+import { ExchPgClient } from "./sdk/exch-pg.client";
+import { BseOnboardingService } from "./services/bse-onboarding.service";
+import { BseOrderService } from "./services/bse-order.service";
+import { BsePaymentService } from "./services/bse-payment.service";
+import { BseHoldingService } from "./services/bse-holding.service";
+import { BseSchemeService } from "./services/bse-scheme.service";
 import { BseController } from "./bse.controller";
 import { BseReconciliationProcessor } from "./jobs/bse-reconciliation.processor";
-import { NotificationModule } from "../notification/notification.module";
 import { BseNotificationAdapter } from "./bse-notification.adapter";
 import { NOTIFICATION_PORT } from "./bse-notification.port";
 
@@ -18,14 +21,24 @@ import { NOTIFICATION_PORT } from "./bse-notification.port";
   controllers: [BseController],
   providers: [
     BseConfig,
-    BseSoapClient,
-    BseSessionService,
-    BseRestClient,
-    BseService,
+    BseSdkClient,
+    ExchPgClient,
+    BseOnboardingService,
+    BseOrderService,
+    BsePaymentService,
+    BseHoldingService,
+    BseSchemeService,
     BseReconciliationProcessor,
-    // Single instance, bound to the port token (BseService injects NOTIFICATION_PORT).
     { provide: NOTIFICATION_PORT, useClass: BseNotificationAdapter },
   ],
-  exports: [BseConfig, BseSoapClient, BseSessionService, BseService, BseReconciliationProcessor],
+  exports: [
+    BseConfig,
+    BseSdkClient,
+    BseOnboardingService,
+    BseOrderService,
+    BseHoldingService,
+    BseSchemeService,
+    BseReconciliationProcessor,
+  ],
 })
 export class BseModule {}

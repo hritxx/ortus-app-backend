@@ -84,6 +84,9 @@ model User {
     oneOnOneSessions         OneOnOneSession[]
     postComments             PostComment[]
     mfOrders                 MutualFundOrder[]
+    mfHoldings               MfHolding[]
+    bankMandates             BankMandate[]
+    sipRegistrations         SipRegistration[]
 
     @@index([email])
     @@index([phone])
@@ -1118,14 +1121,19 @@ model MutualFundOrder {
   id            String        @id @default(cuid())
   userId        String
   bseOrderNumber String?      @unique          // returned by BSE at order entry
+  memOrdRefId   String        @unique          // our idempotency key (mem_ord_ref_id sent to BSE)
+  side          MfOrderSide   @default(BUY)     // BUY (purchase) or SELL (redeem)
   schemeCode    String                          // BSE scheme code
   schemeName    String
-  amount        Float
+  amount        Float?                          // required for BUY; optional for amount-based SELL
+  units         Float?                          // SELL input or BUY allotment output
+  allUnits      Boolean       @default(false)   // redeem-all flag
   type          MfOrderType   @default(LUMPSUM)
   status        MfOrderStatus @default(PENDING_PAYMENT)
-  paymentUrl    String?                         // ICCL redirect (transient; surfaced to app)
-  folioNumber   String?                         // assigned post-allotment by RTA
-  units         Float?                          // assigned post-allotment
+  paymentUrl    String?                         // exchange PG redirect (transient; surfaced to app)
+  paymentRefId  String?                         // from get_exchpg_service / send_payment_info
+  bankTxnRef    String?                         // bank transaction reference
+  folioNumber   String?                         // required for SELL; assigned post-allotment for BUY
   bseRemarks    String?                         // raw BSE message for ops/debugging
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -1135,6 +1143,62 @@ model MutualFundOrder {
   @@index([userId])
   @@index([status])
   @@map("mutual_fund_orders")
+}
+
+// Derived from allotments (D5): our record of what a user owns and can sell.
+model MfHolding {
+  id          String   @id @default(cuid())
+  userId      String
+  ucc         String
+  schemeCode  String
+  schemeName  String
+  folioNumber String
+  units       Float
+  avgCost     Float?
+  lastNav     Float?
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([ucc, schemeCode, folioNumber])
+  @@index([userId])
+  @@map("mf_holdings")
+}
+
+// Phase 2 stubs (models added now so migrations are additive later).
+model BankMandate {
+  id           String        @id @default(cuid())
+  userId       String
+  bseMandateId String?       @unique
+  type         MandateType
+  amountLimit  Float
+  status       MandateStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("bank_mandates")
+}
+
+model SipRegistration {
+  id         String   @id @default(cuid())
+  userId     String
+  bseRegNo   String?  @unique
+  schemeCode String
+  amount     Float
+  frequency  String
+  mandateId  String?
+  status     String   @default("PENDING")
+  nextDebit  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sip_registrations")
 }
 
 model MfScheme {
@@ -1159,11 +1223,32 @@ enum MfOrderType {
   SIP
 }
 
+enum MfOrderSide {
+  BUY
+  SELL
+}
+
 enum MfOrderStatus {
   PENDING_PAYMENT
   PAID
   PROCESSING
   ALLOTTED
+  REDEEMED
+  REJECTED
+  CANCELLED
+}
+
+enum MandateType {
+  ENACH
+  UPI_AUTOPAY
+  NACH
+  XSIP
+  ISIP
+}
+
+enum MandateStatus {
+  PENDING
+  ACTIVE
   REJECTED
   CANCELLED
 }

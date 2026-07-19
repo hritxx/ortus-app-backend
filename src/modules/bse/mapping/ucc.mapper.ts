@@ -53,6 +53,10 @@ export interface UccUserInput {
   pincode?: string | null;
   bankAccount?: string | null;
   ifscCode?: string | null;
+  // KYC type is mandatory for non-minor holders. "C" = CKYC (needs ckycNumber), "K" = KRA.
+  // COLLECT during onboarding — our User model does not capture these yet.
+  kycType?: string | null;
+  ckycNumber?: string | null;
 }
 
 function splitName(full?: string | null): { first: string; middle: string; last: string } {
@@ -88,6 +92,8 @@ export function buildAddUccPayload(user: UccUserInput, clientCode: string, membe
           auth_mode: UCC_CODES.authMode,
           is_pan_exempt: false,
           identifier: [{ identifier_type: "pan", identifier_number: pan }],
+          kyc_type: user.kycType ?? "C",
+          ckyc_number: user.ckycNumber ?? "",
           person: {
             first_name: nm.first,
             middle_name: nm.middle,

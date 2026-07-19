@@ -85,13 +85,17 @@ export class BseOnboardingService {
    * Returns the BSE 2FA e-log URL the investor must complete to activate a physical UCC.
    * (event `ucc_elog`; the app opens the returned 2fa_url in a browser.)
    */
-  async getActivationLink(userId: string): Promise<{ url: string | null }> {
+  async getActivationLink(userId: string): Promise<{ url: string | null; event: string }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.bseUcc) throw new BadRequestException("Complete onboarding first.");
+    // 2FA-included physical flow: PENDING_AUTH needs client auth (ucc_auth) first,
+    // then e-log (ucc_elog) after third-party verification. Pick the event by status.
+    const status = (user.bseUccStatus ?? "").toUpperCase();
+    const event = status === "PENDING_AUTH" || status === "PENDING_AUTHENTICATION" ? "ucc_auth" : "ucc_elog";
     const res = await this.sdk.get2faLink({
       data: [
         {
-          event: "ucc_elog",
+          event,
           investor: { client_code: user.bseUcc, pan_holder: [user.panNumber ?? ""], holding_nature: "SI" },
           parent_client_code: "",
           member: this.cfg.memberCode,
@@ -100,7 +104,7 @@ export class BseOnboardingService {
     });
     const action = (Array.isArray(res?.data) ? res.data[0] : res?.data)?.action;
     const url = action?.event_object?.[0]?.["2fa_url"] ?? null;
-    return { url };
+    return { url, event };
   }
 
   /**

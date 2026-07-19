@@ -3,6 +3,8 @@ FROM node:22-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
+# Vendored BSE StAR MF v2 SDK is a file: dependency — must be present before npm ci.
+COPY vendor-bse-starmfv2-sdk-1.0.0.tgz ./
 RUN npm ci
 COPY . .
 RUN npx prisma generate && npm run build

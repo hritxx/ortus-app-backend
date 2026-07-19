@@ -49,20 +49,30 @@ async function main() {
   const token = loginResp?.data?.access_token;
   if (!token) throw new Error("No access token — check credentials");
 
-  // 2. Scheme master
-  record("master_scheme_list.response", await master.getSchemeMasterList(token, { data: {} }));
+  // 2. Scheme master (requires start/length/fields; schemes come back under data.lists)
+  const masterResp = await master.getSchemeMasterList(token, {
+    data: { start: 0, length: 5, fields: ["ALL"], count_only: false, filter_param: {}, search: {} },
+  });
+  record("master_scheme_list.response", masterResp);
+  const firstScheme = masterResp?.data?.lists?.[0];
+  const schemeCode = process.env.SMOKE_SCHEME ?? firstScheme?.scheme_bse_code ?? "";
+  console.log("Using scheme:", schemeCode, firstScheme?.name);
 
-  // 3. add_ucc
+  // 3. add_ucc (PAN 4th char must be "P" for an individual)
   const clientCode = "ORTUSSMOKE" + Date.now().toString().slice(-6);
   const uccPayload = buildAddUccPayload(
     {
       name: "Smoke Test",
-      panNumber: "ABCDE1234F",
+      panNumber: "ABCPE1234F",
       email: "smoke@example.com",
       phone: "9999999999",
+      dateOfBirth: "1985-06-15",
+      address: "Flat 12, Main St",
+      city: "Mumbai",
+      state: "MH",
+      pincode: "400001",
       bankAccount: "123456789012",
       ifscCode: "HDFC0000001",
-      bankName: "HDFC",
     },
     clientCode,
     member,
@@ -76,7 +86,7 @@ async function main() {
     side: "BUY",
     ucc: clientCode,
     member,
-    scheme: process.env.SMOKE_SCHEME ?? "",
+    scheme: schemeCode,
     amount: 5000,
     memOrdRefId: buyRef,
     email: "smoke@example.com",

@@ -28,31 +28,40 @@ export function mapBseError(rawCode: string, rawMessage?: string): never {
 }
 
 /**
- * The BSE v2 SDK returns the raw response body (never throws). BSE wraps payloads under a
- * top-level `data` key and reports failure via a status/message field. We treat a response
- * as an error when it carries an explicit error signal; otherwise we pass the body through.
- *
- * CONFIRM IN UAT: the exact success/error envelope. Adjust the predicates below once the
- * smoke script records real responses.
+ * The BSE v2 SDK returns the raw response body (never throws). The real UAT envelope is:
+ *   success: { status: "success", data: {...}, messages: [...] }
+ *   error:   { status: "error", data: null, messages: [{ msgid, errcode, field, vals }] }
+ * (verified against the live demo, 2026-07-19). We throw a BseError on `status:"error"`,
+ * surfacing the field-level messages, and also handle HTTP-style error bodies defensively
+ * (used by the direct exch-pg client calls).
  */
 export function normalizeBseResponse<T = any>(resp: any): T {
   if (resp == null) {
     mapBseError("EMPTY", "The exchange returned an empty response.");
   }
 
-  const errorMsg = resp.errorMsg ?? resp.error ?? resp.message;
-  const status = resp.status ?? resp.Status ?? resp.httpStatus;
+  // v2 native error envelope.
+  if (resp.status === "error" || resp.success === false) {
+    const messages: any[] = Array.isArray(resp.messages) ? resp.messages : [];
+    const detail = messages
+      .map((m) => {
+        const val = Array.isArray(m?.vals) ? m.vals.filter(Boolean).join(" ") : "";
+        return [m?.field, m?.errcode, val].filter(Boolean).join(": ");
+      })
+      .filter(Boolean)
+      .join("; ");
+    const code = String(messages[0]?.errcode ?? messages[0]?.msgid ?? resp.code ?? "error");
+    mapBseError(code, detail || resp.errorMsg || resp.error || undefined);
+  }
 
-  const looksLikeError =
+  // Defensive: HTTP-style error bodies (e.g. from direct axios calls).
+  const httpStatus = resp.httpStatus ?? (typeof resp.status === "number" ? resp.status : undefined);
+  if (
+    (typeof httpStatus === "number" && httpStatus >= 400) ||
     typeof resp.errorMsg === "string" ||
-    typeof resp.error === "string" ||
-    (typeof status === "number" && status >= 400) ||
-    (typeof status === "string" && /^(4|5)\d\d$/.test(status)) ||
-    resp.success === false;
-
-  if (looksLikeError) {
-    const code = String(resp.code ?? resp.Status ?? status ?? "unknown");
-    mapBseError(code, typeof errorMsg === "string" ? errorMsg : undefined);
+    typeof resp.error === "string"
+  ) {
+    mapBseError(String(resp.code ?? httpStatus ?? "unknown"), resp.errorMsg ?? resp.error);
   }
 
   return resp as T;

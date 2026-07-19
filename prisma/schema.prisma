@@ -58,6 +58,7 @@ model User {
 
     // BSE Star MF
     bseUcc          String?  @unique   // Unique Client Code (assigned once per investor)
+    bseUccStatus    String?            // UCC lifecycle: PENDING_VERIFICATION / ACTIVE / SUSPENDED (from add_ucc + webhook)
     fatcaRegistered Boolean  @default(false)
 
     // Refresh Token for JWT

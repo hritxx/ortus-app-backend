@@ -24,6 +24,7 @@ export class BseSdkClient {
   private readonly trxn: any;
   private readonly masterData: any;
   private readonly nav: any;
+  private readonly fetch2fa: any;
 
   private cache?: CachedToken;
   private inflight?: Promise<string>;
@@ -35,6 +36,7 @@ export class BseSdkClient {
     this.trxn = new StarMF.TrxnService(opts);
     this.masterData = new StarMF.MasterDataService(opts);
     this.nav = new StarMF.NavService(opts);
+    this.fetch2fa = new StarMF.Fetch2FALinkService(opts);
   }
 
   /** Returns a valid access token, logging in (once) when the cache is cold/expired. */
@@ -75,6 +77,11 @@ export class BseSdkClient {
   }
   async getUcc(payload: unknown): Promise<any> {
     return this.call((t) => this.ucc.getParticularUcc(t, payload));
+  }
+
+  // 2FA link (e.g. UCC e-log activation). Event goes inside the payload.
+  async get2faLink(payload: unknown): Promise<any> {
+    return this.call((t) => this.fetch2fa.get2FAUccElog(t, payload));
   }
 
   // ---- Orders (order_new covers buy type:"p" and sell type:"r") ----

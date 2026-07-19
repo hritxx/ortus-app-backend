@@ -11,6 +11,7 @@ jest.mock("bse-starmfv2-sdk", () => {
     TrxnService: Stub,
     MasterDataService: Stub,
     NavService: Stub,
+    Fetch2FALinkService: Stub,
   };
 });
 

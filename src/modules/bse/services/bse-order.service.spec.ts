@@ -114,7 +114,7 @@ describe("BseOrderService.syncOrderStatus", () => {
       units: null,
     });
     sdk.orderGet.mockResolvedValue({
-      data: { orders: [{ order_status: "ALLOTTED", allotted: true, folio: "F1", units: 120.5 }] },
+      data: { status: "units_rta_settled", folio_num: "F1", allotment_details: { units: 120.5, nav: 41.5 } },
     });
     await svc.syncOrderStatus("o1", "u1");
     expect(holdings.upsertFromAllotment).toHaveBeenCalledWith(

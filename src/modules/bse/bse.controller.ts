@@ -41,6 +41,17 @@ export class BseController {
     return this.onboarding.onboard(req.user.id);
   }
 
+  @Get("onboard/status")
+  onboardStatus(@Request() req) {
+    return this.onboarding.getStatus(req.user.id);
+  }
+
+  @Post("onboard/activation-link")
+  @HttpCode(HttpStatus.OK)
+  activationLink(@Request() req) {
+    return this.onboarding.getActivationLink(req.user.id);
+  }
+
   @Post("purchase")
   @HttpCode(HttpStatus.CREATED)
   purchase(@Request() req, @Body() dto: PurchaseDto) {

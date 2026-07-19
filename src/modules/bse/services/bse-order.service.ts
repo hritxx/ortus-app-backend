@@ -246,11 +246,11 @@ export class BseOrderService {
     return `${Date.now()}${randomInt(1000, 9999)}`;
   }
 
-  // Response shapes: order_new success returns data.orders[0].id (BSE order id).
+  // order_new success returns { data: { items: [{ mem_ord_ref_id, id }] } } (BSE order id).
   private extractOrderNumber(resp: any): string {
     const d = resp?.data ?? resp;
-    const orders = d?.orders ?? d?.order ?? [];
-    const first = Array.isArray(orders) ? orders[0] : orders;
+    const items = d?.items ?? d?.orders ?? [];
+    const first = Array.isArray(items) ? items[0] : items;
     const num = first?.id ?? first?.order_id ?? d?.id ?? d?.order_id;
     if (num == null) {
       throw new InternalServerErrorException("BSE returned success but no order number");
@@ -258,9 +258,10 @@ export class BseOrderService {
     return String(num);
   }
 
+  // order_get returns the order object directly under `data`, with `status`
+  // (order_lifecycle event), `folio_num`, `allotment_details`, `redempt_details`.
   private extractStatusFields(resp: any): {
-    orderStatus?: string;
-    paymentStatus?: string;
+    status?: string;
     allotted?: boolean;
     redeemed?: boolean;
     folio?: string;
@@ -268,17 +269,17 @@ export class BseOrderService {
     nav?: number;
     remarks?: string;
   } {
-    const d = resp?.data ?? resp ?? {};
-    const o = Array.isArray(d?.orders) ? d.orders[0] : (d?.order ?? d);
+    const o = resp?.data ?? resp ?? {};
+    const allot = o?.allotment_details ?? {};
+    const redeem = o?.redempt_details ?? {};
+    const units = allot?.units ?? allot?.alloted_units ?? redeem?.units;
+    const nav = allot?.nav ?? allot?.alloted_nav;
     return {
-      orderStatus: o?.order_status ?? o?.status,
-      paymentStatus: o?.payment_status,
-      allotted: o?.allotted ?? undefined,
-      redeemed: o?.redeemed ?? undefined,
-      folio: o?.folio ?? o?.folio_no ?? undefined,
-      units: o?.units != null ? Number(o.units) : undefined,
-      nav: o?.nav != null ? Number(o.nav) : undefined,
-      remarks: o?.remarks ?? o?.remark ?? undefined,
+      status: o?.status,
+      folio: o?.folio_num ?? allot?.folio_num ?? undefined,
+      units: units != null ? Number(units) : undefined,
+      nav: nav != null ? Number(nav) : undefined,
+      remarks: o?.remarks ?? o?.rta_remark ?? (o?.rejection_reason?.reason ?? undefined),
     };
   }
 }

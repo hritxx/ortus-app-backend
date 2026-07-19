@@ -40,15 +40,67 @@ export class BseOnboardingService {
         clientCode,
         this.cfg.memberCode,
       );
-      await this.sdk.addUccPhysical(payload);
-      ucc = clientCode; // we own client_code; BSE echoes it on success
+      const res = await this.sdk.addUccPhysical(payload);
+      ucc = res?.data?.client_code ?? clientCode; // we own client_code; BSE echoes it
+      const status = res?.data?.status ?? "PENDING_VERIFICATION";
       await this.prisma.user.update({
         where: { id: userId },
-        data: { bseUcc: ucc, fatcaRegistered: true },
+        data: { bseUcc: ucc, bseUccStatus: status, fatcaRegistered: true },
       });
     }
 
     return { ucc: ucc!, fatcaRegistered: true };
+  }
+
+  /**
+   * UCC status for gating orders. A physical UCC is only transaction-ready once ACTIVE
+   * (after AOF/E-Log submission → BSE fires the ACTIVE webhook). Returns our stored status,
+   * refreshed from get_ucc when we don't yet have an ACTIVE flag.
+   */
+  async getStatus(userId: string): Promise<{ ucc: string | null; status: string; active: boolean }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.bseUcc) return { ucc: null, status: "NONE", active: false };
+
+    let status = user.bseUccStatus ?? "PENDING_VERIFICATION";
+    if (status !== "ACTIVE") {
+      try {
+        const res = await this.sdk.getUcc({
+          data: { member_code: { member_id: this.cfg.memberCode }, investor: { client_code: user.bseUcc } },
+        });
+        const fresh = res?.data?.ucc_status ?? res?.data?.status;
+        if (fresh) {
+          status = String(fresh).toUpperCase();
+          if (status !== user.bseUccStatus) {
+            await this.prisma.user.update({ where: { id: userId }, data: { bseUccStatus: status } });
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`get_ucc status refresh failed for ${user.bseUcc}: ${(e as Error).message}`);
+      }
+    }
+    return { ucc: user.bseUcc, status, active: status === "ACTIVE" };
+  }
+
+  /**
+   * Returns the BSE 2FA e-log URL the investor must complete to activate a physical UCC.
+   * (event `ucc_elog`; the app opens the returned 2fa_url in a browser.)
+   */
+  async getActivationLink(userId: string): Promise<{ url: string | null }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.bseUcc) throw new BadRequestException("Complete onboarding first.");
+    const res = await this.sdk.get2faLink({
+      data: [
+        {
+          event: "ucc_elog",
+          investor: { client_code: user.bseUcc, pan_holder: [user.panNumber ?? ""], holding_nature: "SI" },
+          parent_client_code: "",
+          member: this.cfg.memberCode,
+        },
+      ],
+    });
+    const action = (Array.isArray(res?.data) ? res.data[0] : res?.data)?.action;
+    const url = action?.event_object?.[0]?.["2fa_url"] ?? null;
+    return { url };
   }
 
   /**

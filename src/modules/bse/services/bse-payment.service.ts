@@ -15,19 +15,36 @@ export class BsePaymentService {
     private readonly cfg: BseConfig,
   ) {}
 
-  /** Returns the payment redirect URL for a placed buy order. */
+  // Deep link the exchange PG redirects back to after payment (resumed by the app).
+  private static readonly RETURN_URL = "ortus-finance://payment-return";
+
+  /**
+   * Returns the payment redirect URL for a placed buy order.
+   * Payload shape verified against the BSE v2 Postman "get_exchpg_service" sample:
+   * mem_details + investor.ucc + order_ids[] + requested_method + payment_mode[].
+   * (`amount` is not part of this request; kept in the signature for call-site clarity.)
+   */
   async getPaymentUrl(
     bseOrderNumber: string,
     ucc: string,
-    amount: number,
+    _amount?: number,
   ): Promise<{ paymentUrl: string; paymentRefId?: string }> {
+    const orderId = Number(bseOrderNumber);
     const payload = {
       data: {
-        order_id: bseOrderNumber,
-        client_code: ucc,
-        member: this.cfg.memberCode,
-        amount,
-        mode: "NET", // CONFIRM IN UAT: payment mode enum
+        mem_details: {
+          member: this.cfg.memberCode,
+          euin: "",
+          euin_flag: false,
+          sub_br_code: "",
+          sub_br_arn: "",
+          partner_id: "",
+        },
+        investor: { ucc },
+        order_ids: [Number.isFinite(orderId) ? orderId : bseOrderNumber],
+        requested_method: "exch_pg_page", // vs "payment_info_data"
+        payment_mode: ["upi", "netbanking", "mandate"],
+        redirection_url: BsePaymentService.RETURN_URL,
       },
     };
     const { redirectUrl, raw } = await this.exchPg.getExchPgService(payload);

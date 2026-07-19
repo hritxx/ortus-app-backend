@@ -6,7 +6,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from "@nestjs/common";
-import { randomUUID } from "crypto";
+import { randomInt } from "crypto";
 import { PrismaService } from "../../../common/prisma/prisma.service";
 import { BseSdkClient } from "../sdk/bse-sdk.client";
 import { BseConfig } from "../bse.config";
@@ -64,7 +64,7 @@ export class BseOrderService {
       }
     }
 
-    const memOrdRefId = dto.idempotencyKey ?? randomUUID();
+    const memOrdRefId = dto.idempotencyKey ?? this.genNumericRef();
     // Persist BEFORE the BSE call so a retry can't double-place.
     const order = await this.prisma.mutualFundOrder.create({
       data: {
@@ -126,7 +126,7 @@ export class BseOrderService {
       if (existing) return { orderId: existing.id, orderNumber: existing.bseOrderNumber };
     }
 
-    const memOrdRefId = dto.idempotencyKey ?? randomUUID();
+    const memOrdRefId = dto.idempotencyKey ?? this.genNumericRef();
     const order = await this.prisma.mutualFundOrder.create({
       data: {
         userId,
@@ -240,7 +240,13 @@ export class BseOrderService {
     });
   }
 
-  // CONFIRM IN UAT: response shapes. Defensive extraction of the BSE order id from order_new.
+  // BSE requires mem_ord_ref_id to be NUMERIC (verified on UAT: alphanumeric/UUID is rejected
+  // with errcode "invalid"). Generate a unique numeric ref: 13-digit epoch + 4 random digits.
+  private genNumericRef(): string {
+    return `${Date.now()}${randomInt(1000, 9999)}`;
+  }
+
+  // Response shapes: order_new success returns data.orders[0].id (BSE order id).
   private extractOrderNumber(resp: any): string {
     const d = resp?.data ?? resp;
     const orders = d?.orders ?? d?.order ?? [];

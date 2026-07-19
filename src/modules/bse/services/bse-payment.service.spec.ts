@@ -9,11 +9,17 @@ describe("BsePaymentService", () => {
     };
     const cfg = { memberCode: "66881" };
     const svc = new BsePaymentService(exchPg as any, cfg as any);
-    const res = await svc.getPaymentUrl("ORD1", "ORTUS0001", 5000);
+    const res = await svc.getPaymentUrl("50001234", "ORTUS0001", 5000);
     expect(res.paymentUrl).toBe("https://pay/redir");
     expect(res.paymentRefId).toBe("PR1");
     expect(exchPg.getExchPgService).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ order_id: "ORD1", amount: 5000 }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          order_ids: [50001234],
+          investor: { ucc: "ORTUS0001" },
+          requested_method: "exch_pg_page",
+        }),
+      }),
     );
   });
 });

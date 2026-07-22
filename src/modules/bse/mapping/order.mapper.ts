@@ -51,5 +51,31 @@ export function buildOrderNewPayload(input: OrderMapInput) {
 }
 
 export function buildOrderGetPayload(bseOrderNumber: string) {
-  return { data: { id: bseOrderNumber, filter_param: { open_close: "o" } } };
+  // BSE order_get requires `id` as a NUMBER — a string id returns `invalid_json` (622).
+  // Verified live in UAT (2026-07-22); filter_param is optional so we omit it.
+  const id = Number(bseOrderNumber);
+  return { data: { id: Number.isFinite(id) ? id : bseOrderNumber } };
+}
+
+export interface OrderListInput {
+  member: string;
+  ucc?: string; // optional: scope to one investor; omit for all member orders
+  openClose?: "o" | "c"; // "o" open, "c" closed; default open
+  start?: number;
+  length?: number;
+}
+
+export function buildOrderListPayload(input: OrderListInput) {
+  // BSE order_list requires `fields` (bare call → `522 required "Fields"`). "ALL" returns the
+  // full order record; results come back under `data.lists`. Verified live in UAT (2026-07-22).
+  return {
+    data: {
+      member: input.member,
+      ...(input.ucc ? { investor: { ucc: input.ucc } } : {}),
+      fields: ["ALL"],
+      start: input.start ?? 0,
+      length: input.length ?? 100,
+      filter_param: { open_close: input.openClose ?? "o" },
+    },
+  };
 }
